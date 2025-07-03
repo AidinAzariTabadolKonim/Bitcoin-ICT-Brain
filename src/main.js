@@ -54,6 +54,10 @@ export default async function main(context) {
     }));
 
     context.log(`Successfully fetched ${candles.length} 15m candles`);
+    // Explicitly log the candle data
+    context.log('Candle data:');
+    context.log(JSON.stringify(candles, null, 2));
+
     return context.res.json({
       message: `Successfully fetched ${candles.length} 15m candles`,
       data: candles,
