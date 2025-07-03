@@ -2,8 +2,9 @@ import fetch from 'node-fetch';
 
 export default async function (req, res) {
   // Environment variables
+
   const CRYPTOCOMPARE_API_KEY =
-    req.variables['CRYPTOCOMPARE_API_KEY'] || 'YOUR_API_KEY';
+    process.env.CRYPTOCOMPARE_API_KEY || 'YOUR_API_KEY';
   const limit = 99; // Fetch 99 + 1 = 100 candles
 
   // Fetch candle data for a given timeframe
