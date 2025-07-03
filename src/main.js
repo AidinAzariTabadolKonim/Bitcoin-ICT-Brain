@@ -7,7 +7,7 @@ export default async function (req, res) {
     process.env.CRYPTOCOMPARE_API_KEY || 'YOUR_API_KEY';
   const limit = 99; // Fetch 99 + 1 = 100 candles
 
-  // Fetch candle data for a given timeframe
+  // Fetch candle data for a given timeframe with enhanced logging
   async function fetchCandleData(timeframe, limit) {
     try {
       let url;
@@ -20,29 +20,46 @@ export default async function (req, res) {
       } else if (timeframe === '15m') {
         url = `https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USD&limit=${limit}&aggregate=15&api_key=${CRYPTOCOMPARE_API_KEY}`;
       } else {
+        console.error(`Unsupported timeframe requested: ${timeframe}`);
         throw new Error(`Unsupported timeframe: ${timeframe}`);
       }
 
-      console.log(`Fetching URL: ${url}`); // Debug URL
+      // Log the URL being fetched for debugging
+      console.log(`Fetching URL: ${url}`);
       console.log(`Fetching 100 ${timeframe} candles...`);
+
       const response = await fetch(url);
 
-      // Check if response is valid
+      // Check if response is defined
       if (!response) {
+        console.error(`No response received for ${timeframe} timeframe`);
         throw new Error(`No response received for ${timeframe} timeframe`);
       }
 
+      // Log response status for debugging
+      console.log(
+        `Response status for ${timeframe}: ${response.status} ${response.statusText}`
+      );
+
       // Check if response is OK (status 200-299)
       if (!response.ok) {
+        const errorText = await response.text();
+        console.error(
+          `HTTP error for ${timeframe}: ${response.status} ${response.statusText} - Details: ${errorText}`
+        );
         throw new Error(
-          `HTTP error for ${timeframe} timeframe: ${response.status} ${response.statusText}`
+          `HTTP error for ${timeframe} timeframe: ${response.status} ${response.statusText} - ${errorText}`
         );
       }
 
       const data = await response.json();
 
+      // Log successful data retrieval
+      console.log(`Successfully fetched data for ${timeframe} timeframe`);
+
       // Check if API returned an error
       if (data.Response === 'Error') {
+        console.error(`API error for ${timeframe}: ${data.Message}`);
         throw new Error(
           `API error for ${timeframe} timeframe: ${data.Message}`
         );
@@ -59,11 +76,11 @@ export default async function (req, res) {
         volumeto: item.volumeto,
       }));
 
+      console.log(`Processed ${candles.length} candles for ${timeframe}`);
       return candles;
     } catch (error) {
-      throw new Error(
-        `Failed to fetch ${timeframe} candle data: ${error.message}`
-      );
+      console.error(`Error fetching ${timeframe} candles: ${error.message}`);
+      throw error; // Re-throw to handle in the main try-catch
     }
   }
 
@@ -901,7 +918,7 @@ export default async function (req, res) {
       data: results,
     });
   } catch (error) {
-    console.error(`Error: ${error.message}`);
+    console.error(`Error in main execution: ${error.message}`);
     res.json({
       success: false,
       error: error.message,
