@@ -1,8 +1,8 @@
 import fetch from 'node-fetch';
+import 'dotenv/config'; // Add this if using a .env file
 
 export default async function (req, res) {
   // Environment variables
-
   const CRYPTOCOMPARE_API_KEY =
     process.env.CRYPTOCOMPARE_API_KEY || 'YOUR_API_KEY';
   const limit = 99; // Fetch 99 + 1 = 100 candles
@@ -23,12 +23,29 @@ export default async function (req, res) {
         throw new Error(`Unsupported timeframe: ${timeframe}`);
       }
 
+      console.log(`Fetching URL: ${url}`); // Debug URL
       console.log(`Fetching 100 ${timeframe} candles...`);
       const response = await fetch(url);
+
+      // Check if response is valid
+      if (!response) {
+        throw new Error(`No response received for ${timeframe} timeframe`);
+      }
+
+      // Check if response is OK (status 200-299)
+      if (!response.ok) {
+        throw new Error(
+          `HTTP error for ${timeframe} timeframe: ${response.status} ${response.statusText}`
+        );
+      }
+
       const data = await response.json();
 
+      // Check if API returned an error
       if (data.Response === 'Error') {
-        throw new Error(data.Message);
+        throw new Error(
+          `API error for ${timeframe} timeframe: ${data.Message}`
+        );
       }
 
       // Map to the format expected by the indicators function and limit to exactly 100 candles
