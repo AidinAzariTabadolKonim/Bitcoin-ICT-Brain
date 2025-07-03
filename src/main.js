@@ -1,45 +1,49 @@
 import fetch from 'node-fetch';
-import 'dotenv/config'; // Load environment variables from .env file
+import 'dotenv/config';
 
-async function testFetch15mCandles() {
+export async function handler(event, context) {
   const CRYPTOCOMPARE_API_KEY =
     process.env.CRYPTOCOMPARE_API_KEY || 'YOUR_API_KEY';
   const url = `https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USD&limit=99&aggregate=15&api_key=${CRYPTOCOMPARE_API_KEY}`;
-  const limit = 100; // Fetch 100 candles (limit=99 gives 100 due to CryptoCompare API)
+  const limit = 100;
 
   try {
-    console.log(`Fetching URL: ${url}`);
-    console.log(`Fetching 100 15m candles...`);
+    context.log(
+      `Fetching URL: ${url.replace(CRYPTOCOMPARE_API_KEY, 'HIDDEN')}`
+    );
+    context.log(`Fetching 100 15m candles...`);
 
     const response = await fetch(url);
 
-    // Check if response is defined
     if (!response) {
-      console.error('No response received from fetch');
-      return;
+      context.error('No response received from fetch');
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ error: 'No response' }),
+      };
     }
 
-    // Check if response is OK (status 200-299)
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(
+      context.error(
         `HTTP error: ${response.status} ${response.statusText} - Details: ${errorText}`
       );
-      return;
+      return {
+        statusCode: response.status,
+        body: JSON.stringify({ error: errorText }),
+      };
     }
 
-    console.log(`Response status: ${response.status} ${response.statusText}`);
+    context.log(`Response status: ${response.status} ${response.statusText}`);
     const data = await response.json();
 
-    // Check if API returned an error
     if (data.Response === 'Error') {
-      console.error(`API error: ${data.Message}`);
-      return;
+      context.error(`API error: ${data.Message}`);
+      return { statusCode: 500, body: JSON.stringify({ error: data.Message }) };
     }
 
-    // Map to the format expected
     const candles = data.Data.Data.slice(0, limit).map((item) => ({
-      timestamp: item.time * 1000, // Convert to milliseconds
+      timestamp: item.time * 1000,
       high: item.high,
       low: item.low,
       open: item.open,
@@ -48,12 +52,16 @@ async function testFetch15mCandles() {
       volumeto: item.volumeto,
     }));
 
-    console.log(`Successfully fetched ${candles.length} 15m candles:`);
-    console.log(JSON.stringify(candles, null, 2));
+    context.log(`Successfully fetched ${candles.length} 15m candles`);
+    return {
+      statusCode: 200,
+      body: JSON.stringify({ message: 'Success', data: candles }),
+    };
   } catch (error) {
-    console.error(`Error fetching 15m candles: ${error.message}`);
+    context.error(`Error fetching 15m candles: ${error.message}`);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: error.message }),
+    };
   }
 }
-
-// Execute the test function
-testFetch15mCandles();
