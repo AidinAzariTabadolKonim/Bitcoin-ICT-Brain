@@ -1,11 +1,12 @@
 import fetch from 'node-fetch';
-import 'dotenv/config';
+import { config } from 'dotenv';
+config(); // Load environment variables from .env file
 
-export async function handler(event, context) {
+export default async function main(context) {
   const CRYPTOCOMPARE_API_KEY =
     process.env.CRYPTOCOMPARE_API_KEY || 'YOUR_API_KEY';
   const url = `https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USD&limit=99&aggregate=15&api_key=${CRYPTOCOMPARE_API_KEY}`;
-  const limit = 100;
+  const limit = 100; // Fetch 100 candles (limit=99 gives 100 due to CryptoCompare API)
 
   try {
     context.log(
@@ -17,10 +18,7 @@ export async function handler(event, context) {
 
     if (!response) {
       context.error('No response received from fetch');
-      return {
-        statusCode: 500,
-        body: JSON.stringify({ error: 'No response' }),
-      };
+      return context.res.json({ error: 'No response from fetch' }, 500);
     }
 
     if (!response.ok) {
@@ -28,10 +26,13 @@ export async function handler(event, context) {
       context.error(
         `HTTP error: ${response.status} ${response.statusText} - Details: ${errorText}`
       );
-      return {
-        statusCode: response.status,
-        body: JSON.stringify({ error: errorText }),
-      };
+      return context.res.json(
+        {
+          error: `HTTP error: ${response.status} ${response.statusText}`,
+          details: errorText,
+        },
+        response.status
+      );
     }
 
     context.log(`Response status: ${response.status} ${response.statusText}`);
@@ -39,11 +40,11 @@ export async function handler(event, context) {
 
     if (data.Response === 'Error') {
       context.error(`API error: ${data.Message}`);
-      return { statusCode: 500, body: JSON.stringify({ error: data.Message }) };
+      return context.res.json({ error: `API error: ${data.Message}` }, 500);
     }
 
     const candles = data.Data.Data.slice(0, limit).map((item) => ({
-      timestamp: item.time * 1000,
+      timestamp: item.time * 1000, // Convert to milliseconds
       high: item.high,
       low: item.low,
       open: item.open,
@@ -53,15 +54,15 @@ export async function handler(event, context) {
     }));
 
     context.log(`Successfully fetched ${candles.length} 15m candles`);
-    return {
-      statusCode: 200,
-      body: JSON.stringify({ message: 'Success', data: candles }),
-    };
+    return context.res.json({
+      message: `Successfully fetched ${candles.length} 15m candles`,
+      data: candles,
+    });
   } catch (error) {
     context.error(`Error fetching 15m candles: ${error.message}`);
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: error.message }),
-    };
+    return context.res.json(
+      { error: `Error fetching 15m candles: ${error.message}` },
+      500
+    );
   }
 }
