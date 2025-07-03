@@ -1,6 +1,6 @@
 import fetch from 'node-fetch';
 
-module.exports = async function (req, res) {
+export default async function (req, res) {
   // Environment variables
   const CRYPTOCOMPARE_API_KEY =
     req.variables['CRYPTOCOMPARE_API_KEY'] || 'YOUR_API_KEY';
@@ -889,4 +889,4 @@ module.exports = async function (req, res) {
       error: error.message,
     });
   }
-};
+}
