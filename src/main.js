@@ -1,122 +1,892 @@
-import axios from 'axios';
+const fetch = require('node-fetch');
 
-export default async function ({ req, res, log, error }) {
-  try {
-    // CryptoCompare API key from environment
-    const cryptoCompareApiKey = process.env.CRYPTOCOMPARE_API_KEY || '';
-    const API_HEADERS = cryptoCompareApiKey
-      ? { authorization: `Apikey ${cryptoCompareApiKey}` }
-      : {};
+module.exports = async function (req, res) {
+  // Environment variables
+  const CRYPTOCOMPARE_API_KEY =
+    req.variables['CRYPTOCOMPARE_API_KEY'] || 'YOUR_API_KEY';
+  const limit = 99; // Fetch 99 + 1 = 100 candles
 
-    // Define timeframes and their configurations
-    const timeframes = [
-      {
-        name: 'daily',
-        endpoint: 'histoday',
-        aggregate: 1,
-        intervalMs: 24 * 60 * 60 * 1000, // 1 day
-      },
-      {
-        name: '1h',
-        endpoint: 'histohour',
-        aggregate: 1,
-        intervalMs: 60 * 60 * 1000, // 1 hour
-      },
-      {
-        name: '4h',
-        endpoint: 'histohour',
-        aggregate: 4,
-        intervalMs: 4 * 60 * 60 * 1000, // 4 hours
-      },
-      {
-        name: '15m',
-        endpoint: 'histominute',
-        aggregate: 15,
-        intervalMs: 15 * 60 * 1000, // 15 minutes
-      },
-    ];
-
-    // Function to fetch candles for a given timeframe
-    const fetchCandles = async (timeframeConfig) => {
-      const { name, endpoint, aggregate } = timeframeConfig;
-      log(`Fetching 100 ${name} candles...`);
-
-      try {
-        const response = await axios.get(
-          `https://min-api.cryptocompare.com/data/v2/${endpoint}`,
-          {
-            params: {
-              fsym: 'BTC',
-              tsym: 'USD',
-              limit: 100, // Fetch 100 candles
-              aggregate: aggregate,
-              toTs: Math.floor(Date.now() / 1000), // Up to current time
-            },
-            headers: API_HEADERS,
-          }
-        );
-
-        const candleData = response.data.Data.Data;
-        if (!candleData || candleData.length === 0) {
-          throw new Error(`No ${name} data found`);
-        }
-
-        // Format and log candles
-        log(`--- ${name.toUpperCase()} Candles ---`);
-        candleData.forEach((candle, index) => {
-          const date = new Date(candle.time * 1000).toISOString();
-          log(
-            `Candle ${index + 1}: Time=${date}, Open=${candle.open}, High=${
-              candle.high
-            }, Low=${candle.low}, Close=${candle.close}, VolumeBTC=${
-              candle.volumefrom
-            }, VolumeUSD=${candle.volumeto}`
-          );
-        });
-
-        return candleData.length;
-      } catch (err) {
-        error(`Failed to fetch ${name} candles: ${err.message}`);
-        // Retry logic for rate limits or server errors
-        if (err.response?.status === 429 || err.response?.status >= 500) {
-          const maxRetries = 3;
-          for (let i = 1; i <= maxRetries; i++) {
-            const delay = Math.pow(2, i) * 1000;
-            log(`Retry ${i}/${maxRetries} for ${name} in ${delay}ms...`);
-            await new Promise((resolve) => setTimeout(resolve, delay));
-            try {
-              return await fetchCandles(timeframeConfig);
-            } catch (retryErr) {
-              error(`Retry ${i} for ${name} failed: ${retryErr.message}`);
-              if (i === maxRetries) throw retryErr;
-            }
-          }
-        }
-        throw err;
+  // Fetch candle data for a given timeframe
+  async function fetchCandleData(timeframe, limit) {
+    try {
+      let url;
+      if (timeframe === 'daily') {
+        url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=${limit}&api_key=${CRYPTOCOMPARE_API_KEY}`;
+      } else if (timeframe === '1h') {
+        url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=BTC&tsym=USD&limit=${limit}&api_key=${CRYPTOCOMPARE_API_KEY}`;
+      } else if (timeframe === '4h') {
+        url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=BTC&tsym=USD&limit=${limit}&aggregate=4&api_key=${CRYPTOCOMPARE_API_KEY}`;
+      } else if (timeframe === '15m') {
+        url = `https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USD&limit=${limit}&aggregate=15&api_key=${CRYPTOCOMPARE_API_KEY}`;
+      } else {
+        throw new Error(`Unsupported timeframe: ${timeframe}`);
       }
-    };
 
-    // Process all timeframes
-    const results = {};
-    for (const timeframe of timeframes) {
-      try {
-        const count = await fetchCandles(timeframe);
-        results[timeframe.name] = `Fetched ${count} candles`;
-        // Add delay to avoid hitting rate limits
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-      } catch (err) {
-        results[timeframe.name] = `Error: ${err.message}`;
+      console.log(`Fetching 100 ${timeframe} candles...`);
+      const response = await fetch(url);
+      const data = await response.json();
+
+      if (data.Response === 'Error') {
+        throw new Error(data.Message);
+      }
+
+      // Map to the format expected by the indicators function and limit to exactly 100 candles
+      const candles = data.Data.Data.slice(0, 100).map((item) => ({
+        timestamp: item.time * 1000,
+        high: item.high,
+        low: item.low,
+        open: item.open,
+        close: item.close,
+        volumefrom: item.volumefrom,
+        volumeto: item.volumeto,
+      }));
+
+      return candles;
+    } catch (error) {
+      throw new Error(
+        `Failed to fetch ${timeframe} candle data: ${error.message}`
+      );
+    }
+  }
+
+  // Function to find swing points, breakers, FVGs, order blocks, propulsion blocks, rejection blocks, and mitigation blocks
+  function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
+    priceData
+  ) {
+    const swingHighs = [];
+    const swingLows = [];
+    const untappedHighs = [];
+    const untappedLows = [];
+    const bullishBreakers = [];
+    const bearishBreakers = [];
+    const bullishFVGs = [];
+    const bearishFVGs = [];
+    const bullishOrderBlocks = [];
+    const bearishOrderBlocks = [];
+    const bullishPropulsionBlocks = [];
+    const bearishPropulsionBlocks = [];
+    const bullishRejectionBlocks = [];
+    const bearishRejectionBlocks = [];
+    const bullishMitigationBlocks = [];
+    const bearishMitigationBlocks = [];
+
+    // Step 1: Identify swing highs and lows
+    if (priceData.length < 3) {
+      return {
+        swingHighs: untappedHighs,
+        swingLows: untappedLows,
+        bullishBreakers,
+        bearishBreakers,
+        bullishFVGs,
+        bearishFVGs,
+        bullishOrderBlocks,
+        bearishOrderBlocks,
+        bullishPropulsionBlocks,
+        bearishPropulsionBlocks,
+        bullishRejectionBlocks,
+        bearishRejectionBlocks,
+        bullishMitigationBlocks,
+        bearishMitigationBlocks,
+      };
+    }
+
+    for (let i = 1; i < priceData.length - 1; i++) {
+      const prevCandle = priceData[i - 1];
+      const currentCandle = priceData[i];
+      const nextCandle = priceData[i + 1];
+
+      // Swing High
+      if (
+        currentCandle.high > prevCandle.high &&
+        currentCandle.high > nextCandle.high
+      ) {
+        swingHighs.push({
+          timestamp: currentCandle.timestamp,
+          price: currentCandle.high,
+          index: i,
+        });
+      }
+
+      // Swing Low
+      if (
+        currentCandle.low < prevCandle.low &&
+        currentCandle.low < nextCandle.low
+      ) {
+        swingLows.push({
+          timestamp: currentCandle.timestamp,
+          price: currentCandle.low,
+          index: i,
+        });
       }
     }
 
-    // Return summary
-    return res.json({
-      status: 'success',
-      results: results,
-      message: 'Completed fetching candles for all timeframes',
-    });
-  } catch (err) {
-    error(`Unexpected error: ${err.message}`);
-    return res.json({ error: `Unexpected error: ${err.message}` }, 500);
+    // Step 2: Filter untapped swing highs and lows
+    const latestPrice = priceData[priceData.length - 1].close;
+    for (let i = 0; i < swingHighs.length; i++) {
+      const swingHigh = swingHighs[i];
+      let isUntapped = true;
+
+      for (let j = swingHigh.index + 1; j < priceData.length; j++) {
+        if (priceData[j].high >= swingHigh.price) {
+          isUntapped = false;
+          break;
+        }
+      }
+
+      if (isUntapped && swingHigh.price > latestPrice) {
+        untappedHighs.push({
+          timestamp: swingHigh.timestamp,
+          price: swingHigh.price,
+        });
+      }
+    }
+
+    for (let i = 0; i < swingLows.length; i++) {
+      const swingLow = swingLows[i];
+      let isUntapped = true;
+
+      for (let j = swingLow.index + 1; j < priceData.length; j++) {
+        if (priceData[j].low <= swingLow.price) {
+          isUntapped = false;
+          break;
+        }
+      }
+
+      if (isUntapped && swingLow.price < latestPrice) {
+        untappedLows.push({
+          timestamp: swingLow.timestamp,
+          price: swingLow.price,
+        });
+      }
+    }
+
+    // Step 3: Identify Bullish and Bearish Breaker Blocks
+    for (let i = 1; i < swingLows.length; i++) {
+      const currentLow = swingLows[i];
+      const prevLow = swingLows[i - 1];
+
+      if (currentLow.price < prevLow.price) {
+        let swingHighBetween = null;
+        for (let j = 0; j < swingHighs.length; j++) {
+          if (
+            swingHighs[j].index > prevLow.index &&
+            swingHighs[j].index < currentLow.index
+          ) {
+            swingHighBetween = swingHighs[j];
+            break;
+          }
+        }
+
+        if (swingHighBetween) {
+          let mssConfirmed = false;
+          for (let j = currentLow.index + 1; j < priceData.length; j++) {
+            if (priceData[j].high > swingHighBetween.price) {
+              mssConfirmed = true;
+              break;
+            }
+          }
+
+          if (mssConfirmed) {
+            bullishBreakers.push({
+              timestamp: swingHighBetween.timestamp,
+              price: swingHighBetween.price,
+            });
+          }
+        }
+      }
+    }
+
+    for (let i = 1; i < swingHighs.length; i++) {
+      const currentHigh = swingHighs[i];
+      const prevHigh = swingHighs[i - 1];
+
+      if (currentHigh.price > prevHigh.price) {
+        let swingLowBetween = null;
+        for (let j = 0; j < swingLows.length; j++) {
+          if (
+            swingLows[j].index > prevHigh.index &&
+            swingLows[j].index < currentHigh.index
+          ) {
+            swingLowBetween = swingLows[j];
+            break;
+          }
+        }
+
+        if (swingLowBetween) {
+          let mssConfirmed = false;
+          for (let j = currentHigh.index + 1; j < priceData.length; j++) {
+            if (priceData[j].low < swingLowBetween.price) {
+              mssConfirmed = true;
+              break;
+            }
+          }
+
+          if (mssConfirmed) {
+            bearishBreakers.push({
+              timestamp: swingLowBetween.timestamp,
+              price: swingLowBetween.price,
+            });
+          }
+        }
+      }
+    }
+
+    // Step 4: Identify Bullish and Bearish FVGs
+    for (let i = 0; i < priceData.length - 2; i++) {
+      const candle1 = priceData[i];
+      const candle2 = priceData[i + 1];
+      const candle3 = priceData[i + 2];
+
+      // Bullish FVG: Gap between candle1.low and candle3.high
+      if (candle1.low > candle3.high) {
+        const gapSize = candle1.low - candle3.high;
+        const minGapPercent = 0.002; // 0.2%
+        if (gapSize / candle3.high >= minGapPercent) {
+          let isActive = 'active';
+          const gapLow = candle3.high;
+          const gapHigh = candle1.low;
+          let maxFilled = 0;
+
+          for (let j = i + 3; j < priceData.length; j++) {
+            const currentCandle = priceData[j];
+            if (currentCandle.high >= gapLow && currentCandle.low <= gapHigh) {
+              const filledHigh = Math.min(currentCandle.high, gapHigh);
+              const filledLow = Math.max(currentCandle.low, gapLow);
+              const filledSize = filledHigh - filledLow;
+              const fillPercent = filledSize / gapSize;
+              maxFilled = Math.max(maxFilled, fillPercent);
+            }
+          }
+
+          if (maxFilled > 0) {
+            isActive = maxFilled > 0.8 ? 'inactive' : 'partially_active';
+          }
+
+          bullishFVGs.push({
+            timestamp: candle2.timestamp,
+            high: gapHigh,
+            low: gapLow,
+            isActive,
+          });
+        }
+      }
+
+      // Bearish FVG: Gap between candle1.high and candle3.low
+      if (candle1.high < candle3.low) {
+        const gapSize = candle3.low - candle1.high;
+        const minGapPercent = 0.002; // 0.2%
+        if (gapSize / candle1.high >= minGapPercent) {
+          let isActive = 'active';
+          const gapLow = candle1.high;
+          const gapHigh = candle3.low;
+          let maxFilled = 0;
+
+          for (let j = i + 3; j < priceData.length; j++) {
+            const currentCandle = priceData[j];
+            if (currentCandle.high >= gapLow && currentCandle.low <= gapHigh) {
+              const filledHigh = Math.min(currentCandle.high, gapHigh);
+              const filledLow = Math.max(currentCandle.low, gapLow);
+              const filledSize = filledHigh - filledLow;
+              const fillPercent = filledSize / gapSize;
+              maxFilled = Math.max(maxFilled, fillPercent);
+            }
+          }
+
+          if (maxFilled > 0) {
+            isActive = maxFilled > 0.8 ? 'inactive' : 'partially_active';
+          }
+
+          bearishFVGs.push({
+            timestamp: candle2.timestamp,
+            high: gapHigh,
+            low: gapLow,
+            isActive,
+          });
+        }
+      }
+    }
+
+    // Step 5: Identify Bullish and Bearish Order Blocks
+    for (let i = 0; i < priceData.length; i++) {
+      const candle = priceData[i];
+      const bodySize = Math.abs(candle.open - candle.close);
+      const minBodyPercent = 0.002; // 0.2%
+
+      // Bullish Order Block: Down-close candle near a swing low
+      if (
+        candle.close < candle.open &&
+        bodySize / candle.open >= minBodyPercent
+      ) {
+        let nearSwingLow = false;
+        for (let j = 0; j < swingLows.length; j++) {
+          const swingLow = swingLows[j];
+          const priceDiff =
+            Math.abs(candle.low - swingLow.price) / swingLow.price;
+          if (priceDiff <= 0.005 || swingLow.index === i) {
+            nearSwingLow = true;
+            break;
+          }
+        }
+
+        if (nearSwingLow) {
+          let isValidated = false;
+          for (let j = i + 1; j < priceData.length; j++) {
+            if (priceData[j].high > candle.high) {
+              isValidated = true;
+              break;
+            }
+          }
+
+          if (isValidated) {
+            const meanThreshold = (candle.open + candle.close) / 2;
+            let isActive = true;
+
+            for (let j = i + 1; j < priceData.length; j++) {
+              if (priceData[j].close < meanThreshold) {
+                isActive = false;
+                break;
+              }
+            }
+
+            bullishOrderBlocks.push({
+              timestamp: candle.timestamp,
+              price: meanThreshold,
+              isActive,
+            });
+          }
+        }
+      }
+
+      // Bearish Order Block: Up-close candle near a swing high
+      if (
+        candle.close > candle.open &&
+        bodySize / candle.open >= minBodyPercent
+      ) {
+        let nearSwingHigh = false;
+        for (let j = 0; j < swingHighs.length; j++) {
+          const swingHigh = swingHighs[j];
+          const priceDiff =
+            Math.abs(candle.high - swingHigh.price) / swingHigh.price;
+          if (priceDiff <= 0.005 || swingHigh.index === i) {
+            nearSwingHigh = true;
+            break;
+          }
+        }
+
+        if (nearSwingHigh) {
+          let isValidated = false;
+          for (let j = i + 1; j < priceData.length; j++) {
+            if (priceData[j].low < candle.low) {
+              isValidated = true;
+              break;
+            }
+          }
+
+          if (isValidated) {
+            const meanThreshold = (candle.open + candle.close) / 2;
+            let isActive = true;
+
+            for (let j = i + 1; j < priceData.length; j++) {
+              if (priceData[j].close > meanThreshold) {
+                isActive = false;
+                break;
+              }
+            }
+
+            bearishOrderBlocks.push({
+              timestamp: candle.timestamp,
+              price: meanThreshold,
+              isActive,
+            });
+          }
+        }
+      }
+    }
+
+    // Step 6: Identify Bullish and Bearish Propulsion Blocks
+    for (let i = 0; i < priceData.length; i++) {
+      const candle = priceData[i];
+      const bodySize = Math.abs(candle.open - candle.close);
+      const minBodyPercent = 0.002; // 0.2%
+
+      // Bullish Propulsion Block: Down-close candle near a bullish order block
+      if (
+        candle.close < candle.open &&
+        bodySize / candle.open >= minBodyPercent
+      ) {
+        let nearOrderBlock = false;
+        for (let j = 0; j < bullishOrderBlocks.length; j++) {
+          const orderBlock = bullishOrderBlocks[j];
+          const priceDiff =
+            Math.abs(candle.low - orderBlock.price) / orderBlock.price;
+          if (priceDiff <= 0.005) {
+            nearOrderBlock = true;
+            break;
+          }
+        }
+
+        if (nearOrderBlock) {
+          const meanThreshold = (candle.open + candle.close) / 2;
+          let isActive = true;
+
+          for (let j = i + 1; j < priceData.length; j++) {
+            if (priceData[j].close < meanThreshold) {
+              isActive = false;
+              break;
+            }
+          }
+
+          bullishPropulsionBlocks.push({
+            timestamp: candle.timestamp,
+            price: meanThreshold,
+            isActive,
+          });
+        }
+      }
+
+      // Bearish Propulsion Block: Up-close candle near a bearish order block
+      if (
+        candle.close > candle.open &&
+        bodySize / candle.open >= minBodyPercent
+      ) {
+        let nearOrderBlock = false;
+        for (let j = 0; j < bearishOrderBlocks.length; j++) {
+          const orderBlock = bearishOrderBlocks[j];
+          const priceDiff =
+            Math.abs(candle.high - orderBlock.price) / orderBlock.price;
+          if (priceDiff <= 0.005) {
+            nearOrderBlock = true;
+            break;
+          }
+        }
+
+        if (nearOrderBlock) {
+          const meanThreshold = (candle.open + candle.close) / 2;
+          let isActive = true;
+
+          for (let j = i + 1; j < priceData.length; j++) {
+            if (priceData[j].close > meanThreshold) {
+              isActive = false;
+              break;
+            }
+          }
+
+          bearishPropulsionBlocks.push({
+            timestamp: candle.timestamp,
+            price: meanThreshold,
+            isActive,
+          });
+        }
+      }
+    }
+
+    // Step 7: Identify Bullish and Bearish Rejection Blocks
+    for (let i = 0; i < swingLows.length; i++) {
+      const swingLow = swingLows[i];
+      const index = swingLow.index;
+
+      // Bullish Rejection Block: Cluster of 2+ candles with long lower wicks
+      if (index >= 1 && index < priceData.length) {
+        const candles = [];
+        let j = index;
+        const swingCandle = priceData[j];
+        const swingBodySize = Math.abs(swingCandle.open - swingCandle.close);
+        const swingLowerWick =
+          swingCandle.open < swingCandle.close
+            ? swingCandle.low - swingCandle.open
+            : swingCandle.low - swingCandle.close;
+        const minWickPercent = 0.002; // 0.2%
+        if (
+          swingLowerWick >= swingBodySize &&
+          swingLowerWick / swingCandle.open >= minWickPercent
+        ) {
+          candles.push(swingCandle);
+        }
+
+        while (j > 0 && candles.length < 5) {
+          const prevCandle = priceData[j - 1];
+          const prevBodySize = Math.abs(prevCandle.open - prevCandle.close);
+          const prevLowerWick =
+            prevCandle.open < prevCandle.close
+              ? prevCandle.low - prevCandle.open
+              : prevCandle.low - prevCandle.close;
+          if (
+            prevLowerWick >= prevBodySize &&
+            prevLowerWick / prevCandle.open >= minWickPercent
+          ) {
+            candles.push(prevCandle);
+            j--;
+          } else {
+            break;
+          }
+        }
+
+        if (candles.length >= 2) {
+          let lowestWick = Infinity;
+          let highestBodyClose = -Infinity;
+          let lowestBodyClose = Infinity;
+
+          for (const candle of candles) {
+            lowestWick = Math.min(lowestWick, candle.low);
+            const bodyClose = Math.max(candle.open, candle.close);
+            highestBodyClose = Math.max(highestBodyClose, bodyClose);
+            lowestBodyClose = Math.min(
+              lowestBodyClose,
+              Math.min(candle.open, candle.close)
+            );
+          }
+
+          // Validate: Price breaks below lowest body close, then reverses
+          let isValidated = false;
+          for (let j = index + 1; j < priceData.length && j <= index + 5; j++) {
+            if (
+              priceData[j].low < lowestBodyClose &&
+              priceData[j].close > lowestBodyClose
+            ) {
+              isValidated = true;
+              break;
+            }
+          }
+
+          if (isValidated) {
+            let isActive = true;
+            for (let j = index + 1; j < priceData.length; j++) {
+              if (priceData[j].close < lowestWick) {
+                isActive = false;
+                break;
+              }
+            }
+
+            bullishRejectionBlocks.push({
+              timestamp: swingLow.timestamp,
+              price: highestBodyClose,
+              isActive,
+            });
+          }
+        }
+      }
+    }
+
+    for (let i = 0; i < swingHighs.length; i++) {
+      const swingHigh = swingHighs[i];
+      const index = swingHigh.index;
+
+      // Bearish Rejection Block: Cluster of 2+ candles with long upper wicks
+      if (index >= 1 && index < priceData.length) {
+        const candles = [];
+        let j = index;
+        const swingCandle = priceData[j];
+        const swingBodySize = Math.abs(swingCandle.open - swingCandle.close);
+        const swingUpperWick =
+          swingCandle.open > swingCandle.close
+            ? swingCandle.high - swingCandle.open
+            : swingCandle.high - swingCandle.close;
+        const minWickPercent = 0.002; // 0.2%
+        if (
+          swingUpperWick >= swingBodySize &&
+          swingUpperWick / swingCandle.open >= minWickPercent
+        ) {
+          candles.push(swingCandle);
+        }
+
+        while (j > 0 && candles.length < 5) {
+          const prevCandle = priceData[j - 1];
+          const prevBodySize = Math.abs(prevCandle.open - prevCandle.close);
+          const prevUpperWick =
+            prevCandle.open > prevCandle.close
+              ? prevCandle.high - prevCandle.open
+              : prevCandle.high - prevCandle.close;
+          if (
+            prevUpperWick >= prevBodySize &&
+            prevUpperWick / prevCandle.open >= minWickPercent
+          ) {
+            candles.push(prevCandle);
+            j--;
+          } else {
+            break;
+          }
+        }
+
+        if (candles.length >= 2) {
+          let highestWick = -Infinity;
+          let lowestBodyClose = Infinity;
+          let highestBodyClose = -Infinity;
+
+          for (const candle of candles) {
+            highestWick = Math.max(highestWick, candle.high);
+            const bodyClose = Math.min(candle.open, candle.close);
+            lowestBodyClose = Math.min(lowestBodyClose, bodyClose);
+            highestBodyClose = Math.max(
+              highestBodyClose,
+              Math.max(candle.open, candle.close)
+            );
+          }
+
+          // Validate: Price breaks above highest body close, then reverses
+          let isValidated = false;
+          for (let j = index + 1; j < priceData.length && j <= index + 5; j++) {
+            if (
+              priceData[j].high > highestBodyClose &&
+              priceData[j].close < highestBodyClose
+            ) {
+              isValidated = true;
+              break;
+            }
+          }
+
+          if (isValidated) {
+            let isActive = true;
+            for (let j = index + 1; j < priceData.length; j++) {
+              if (priceData[j].close > highestWick) {
+                isActive = false;
+                break;
+              }
+            }
+
+            bearishRejectionBlocks.push({
+              timestamp: swingHigh.timestamp,
+              price: lowestBodyClose,
+              isActive,
+            });
+          }
+        }
+      }
+    }
+
+    // Step 8: Identify Bullish and Bearish Mitigation Blocks
+    for (let i = 0; i < priceData.length; i++) {
+      const candle = priceData[i];
+      const bodySize = Math.abs(candle.open - candle.close);
+      const minBodyPercent = 0.002; // 0.2%
+
+      // Bearish Mitigation Block: Last down-close candle before MSS (break below swing low)
+      if (
+        candle.close < candle.open &&
+        bodySize / candle.open >= minBodyPercent
+      ) {
+        let mssConfirmed = false;
+        let mssIndex = -1;
+        for (let j = i + 1; j < priceData.length && j <= i + 5; j++) {
+          for (let k = 0; k < swingLows.length; k++) {
+            if (swingLows[k].index < i) {
+              if (priceData[j].low < swingLows[k].price) {
+                mssConfirmed = true;
+                mssIndex = j;
+                break;
+              }
+            }
+          }
+          if (mssConfirmed) break;
+        }
+
+        if (mssConfirmed) {
+          let isLast = true;
+          for (let j = i + 1; j < mssIndex; j++) {
+            const nextCandle = priceData[j];
+            if (
+              nextCandle.close < nextCandle.open &&
+              Math.abs(nextCandle.open - nextCandle.close) / nextCandle.open >=
+                minBodyPercent
+            ) {
+              isLast = false;
+              break;
+            }
+          }
+
+          if (isLast) {
+            const meanThreshold = (candle.open + candle.close) / 2;
+            let isActive = true;
+
+            for (let j = i + 1; j < priceData.length; j++) {
+              if (priceData[j].close > candle.high) {
+                isActive = false;
+                break;
+              }
+            }
+
+            bearishMitigationBlocks.push({
+              timestamp: candle.timestamp,
+              price: meanThreshold,
+              isActive,
+            });
+          }
+        }
+      }
+
+      // Bullish Mitigation Block: Last up-close candle before MSS (break above swing high)
+      if (
+        candle.close > candle.open &&
+        bodySize / candle.open >= minBodyPercent
+      ) {
+        let mssConfirmed = false;
+        let mssIndex = -1;
+        for (let j = i + 1; j < priceData.length && j <= i + 5; j++) {
+          for (let k = 0; k < swingHighs.length; k++) {
+            if (swingHighs[k].index < i) {
+              if (priceData[j].high > swingHighs[k].price) {
+                mssConfirmed = true;
+                mssIndex = j;
+                break;
+              }
+            }
+          }
+          if (mssConfirmed) break;
+        }
+
+        if (mssConfirmed) {
+          let isLast = true;
+          for (let j = i + 1; j < mssIndex; j++) {
+            const nextCandle = priceData[j];
+            if (
+              nextCandle.close > nextCandle.open &&
+              Math.abs(nextCandle.open - nextCandle.close) / nextCandle.open >=
+                minBodyPercent
+            ) {
+              isLast = false;
+              break;
+            }
+          }
+
+          if (isLast) {
+            const meanThreshold = (candle.open + candle.close) / 2;
+            let isActive = true;
+
+            for (let j = i + 1; j < priceData.length; j++) {
+              if (priceData[j].close < candle.low) {
+                isActive = false;
+                break;
+              }
+            }
+
+            bullishMitigationBlocks.push({
+              timestamp: candle.timestamp,
+              price: meanThreshold,
+              isActive,
+            });
+          }
+        }
+      }
+    }
+
+    // Sort by timestamp
+    untappedHighs.sort((a, b) => a.timestamp - b.timestamp);
+    untappedLows.sort((a, b) => a.timestamp - b.timestamp);
+    bullishBreakers.sort((a, b) => a.timestamp - b.timestamp);
+    bearishBreakers.sort((a, b) => a.timestamp - b.timestamp);
+    bullishFVGs.sort((a, b) => a.timestamp - b.timestamp);
+    bearishFVGs.sort((a, b) => a.timestamp - b.timestamp);
+    bullishOrderBlocks.sort((a, b) => a.timestamp - b.timestamp);
+    bearishOrderBlocks.sort((a, b) => a.timestamp - b.timestamp);
+    bullishPropulsionBlocks.sort((a, b) => a.timestamp - b.timestamp);
+    bearishPropulsionBlocks.sort((a, b) => a.timestamp - b.timestamp);
+    bullishRejectionBlocks.sort((a, b) => a.timestamp - b.timestamp);
+    bearishRejectionBlocks.sort((a, b) => a.timestamp - b.timestamp);
+    bullishMitigationBlocks.sort((a, b) => a.timestamp - b.timestamp);
+    bearishMitigationBlocks.sort((a, b) => a.timestamp - b.timestamp);
+
+    return {
+      swingHighs: untappedHighs,
+      swingLows: untappedLows,
+      bullishBreakers,
+      bearishBreakers,
+      bullishFVGs,
+      bearishFVGs,
+      bullishOrderBlocks,
+      bearishOrderBlocks,
+      bullishPropulsionBlocks,
+      bearishPropulsionBlocks,
+      bullishRejectionBlocks,
+      bearishRejectionBlocks,
+      bullishMitigationBlocks,
+      bearishMitigationBlocks,
+    };
   }
-}
+
+  // Function to log indicators only
+  function logResults(timeframe, candles, indicators) {
+    console.log(`\n--- ${timeframe.toUpperCase()} ICT Indicators ---`);
+    console.log('Swing Highs:', JSON.stringify(indicators.swingHighs, null, 2));
+    console.log('Swing Lows:', JSON.stringify(indicators.swingLows, null, 2));
+    console.log(
+      'Bullish Breakers:',
+      JSON.stringify(indicators.bullishBreakers, null, 2)
+    );
+    console.log(
+      'Bearish Breakers:',
+      JSON.stringify(indicators.bearishBreakers, null, 2)
+    );
+    console.log(
+      'Bullish FVGs:',
+      JSON.stringify(indicators.bullishFVGs, null, 2)
+    );
+    console.log(
+      'Bearish FVGs:',
+      JSON.stringify(indicators.bearishFVGs, null, 2)
+    );
+    console.log(
+      'Bullish Order Blocks:',
+      JSON.stringify(indicators.bullishOrderBlocks, null, 2)
+    );
+    console.log(
+      'Bearish Order Blocks:',
+      JSON.stringify(indicators.bearishOrderBlocks, null, 2)
+    );
+    console.log(
+      'Bullish Propulsion Blocks:',
+      JSON.stringify(indicators.bullishPropulsionBlocks, null, 2)
+    );
+    console.log(
+      'Bearish Propulsion Blocks:',
+      JSON.stringify(indicators.bearishPropulsionBlocks, null, 2)
+    );
+    console.log(
+      'Bullish Rejection Blocks:',
+      JSON.stringify(indicators.bullishRejectionBlocks, null, 2)
+    );
+    console.log(
+      'Bearish Rejection Blocks:',
+      JSON.stringify(indicators.bearishRejectionBlocks, null, 2)
+    );
+    console.log(
+      'Bullish Mitigation Blocks:',
+      JSON.stringify(indicators.bullishMitigationBlocks, null, 2)
+    );
+    console.log(
+      'Bearish Mitigation Blocks:',
+      JSON.stringify(indicators.bearishMitigationBlocks, null, 2)
+    );
+    console.log(`Latest Price: ${candles[candles.length - 1].close}`);
+  }
+
+  try {
+    // Fetch candles for each timeframe
+    const timeframes = ['daily', '1h', '4h', '15m'];
+    const results = {};
+
+    for (const timeframe of timeframes) {
+      const candles = await fetchCandleData(timeframe, limit);
+      const indicators =
+        findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
+          candles
+        );
+      results[timeframe] = {
+        candles,
+        indicators,
+        latestPrice: candles[candles.length - 1].close,
+      };
+      logResults(timeframe, candles, indicators);
+    }
+
+    // Return JSON response
+    res.json({
+      success: true,
+      data: results,
+    });
+  } catch (error) {
+    console.error(`Error: ${error.message}`);
+    res.json({
+      success: false,
+      error: error.message,
+    });
+  }
+};
