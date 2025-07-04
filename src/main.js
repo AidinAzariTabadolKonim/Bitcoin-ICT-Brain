@@ -66,7 +66,7 @@ const generateDocx = async (prompt, context) => {
         properties: {},
         children: [
           new Paragraph({
-            text: 'BTC/USD ICT Analysis Prompt',
+            text: 'پرامپت هوش مصنوعی برای تحلیل ICT بیت‌کوین/دلار',
             heading: 'Heading1',
           }),
           new Paragraph({
@@ -1002,50 +1002,50 @@ async function sendToTelegram(analysis, prompt, context) {
   const maxMessageLength = 4096;
 
   const formatMessage = (data) => {
-    let message = `*BTC/USD ICT Analysis*\n\n`;
-    message += `📊 *Signal:* ${escapeMarkdownV2(data.signal || 'N/A')}\n`;
-    message += `🔥 *Confidence:* ${escapeMarkdownV2(data.confidence || 'N/A')}\n`;
-    message += `⏰ *Timeframe:* ${escapeMarkdownV2(data.timeframe || 'N/A')}\n`;
-    message += `💰 *Current Price:* ${escapeMarkdownV2(
-      data.current_price ? data.current_price.toFixed(2) : 'N/A'
+    let message = `*تحلیل ICT بیت‌کوین/دلار*\n\n`;
+    message += `📊 *سیگنال:* ${escapeMarkdownV2(data.signal || 'غیره')}\n`;
+    message += `🔥 *اطمینان:* ${escapeMarkdownV2(data.confidence || 'غیره')}\n`;
+    message += `⏰ *بازه زمانی:* ${escapeMarkdownV2(data.timeframe || 'غیره')}\n`;
+    message += `💰 *قیمت کنونی:* ${escapeMarkdownV2(
+      data.current_price ? data.current_price.toFixed(2) : 'غیره'
     )}\n`;
-    message += `✍️ *Summary:* ${escapeMarkdownV2(data.summary || 'No summary provided')}\n`;
-    message += `🔄 *Potential Setups Forming:* ${escapeMarkdownV2(
-      data.potential_setups_forming || 'None'
+    message += `✍️ *خلاصه:* ${escapeMarkdownV2(data.summary || 'بدون خلاصه')}\n`;
+    message += `🔄 *ستاپ‌های بالقوه در حال شکل‌گیری:* ${escapeMarkdownV2(
+      data.potential_setups_forming || 'هیچ'
     )}\n`;
-    message += `🎯 *Key Levels to Watch:* ${escapeMarkdownV2(
-      data.key_levels_to_watch?.join(', ') || 'None'
+    message += `🎯 *سطوح کلیدی برای مشاهده:* ${escapeMarkdownV2(
+      data.key_levels_to_watch?.join(', ') || 'هیچ'
     )}\n`;
-    message += `📰 *News Analysis:*\n`;
+    message += `📰 *تحلیل اخبار:*\n`;
     if (data.news_analysis?.recent_news?.length > 0) {
-      message += `  *Recent News:*\n`;
+      message += `  *اخبار اخیر:*\n`;
       data.news_analysis.recent_news.forEach((news) => {
         message += `    \\- ${escapeMarkdownV2(news.event)} \\(${escapeMarkdownV2(
           news.datetime_utc
-        )}\\): ${escapeMarkdownV2(news.impact || 'N/A')}\n`;
+        )}\\): ${escapeMarkdownV2(news.impact || 'غیره')}\n`;
       });
     } else {
-      message += `  *Recent News:* None\n`;
+      message += `  *اخبار اخیر:* هیچ\n`;
     }
     if (data.news_analysis?.upcoming_news?.length > 0) {
-      message += `  *Upcoming News:*\n`;
+      message += `  *اخبار آتی:*\n`;
       data.news_analysis.upcoming_news.forEach((news) => {
         message += `    \\- ${escapeMarkdownV2(news.event)} \\(${escapeMarkdownV2(
           news.datetime_utc
-        )}\\): ${escapeMarkdownV2(news.alert || 'N/A')}\n`;
+        )}\\): ${escapeMarkdownV2(news.alert || 'غیره')}\n`;
       });
     } else {
-      message += `  *Upcoming News:* None\n`;
+      message += `  *اخبار آتی:* هیچ\n`;
     }
-    message += `⏰ *Kill Zone Context:*\n`;
-    message += `  *Current:* ${escapeMarkdownV2(
-      data.kill_zone_context?.current_kill_zone || 'None'
+    message += `⏰ *زمینه منطقه کشتار:*\n`;
+    message += `  *کنونی:* ${escapeMarkdownV2(
+      data.kill_zone_context?.current_kill_zone || 'هیچ'
     )}\n`;
-    message += `  *Upcoming:* ${escapeMarkdownV2(
-      data.kill_zone_context?.upcoming_kill_zone || 'None'
+    message += `  *آتی:* ${escapeMarkdownV2(
+      data.kill_zone_context?.upcoming_kill_zone || 'هیچ'
     )}\n`;
-    message += `  *Relevance:* ${escapeMarkdownV2(
-      data.kill_zone_context?.relevance || 'N/A'
+    message += `  *ارتباط:* ${escapeMarkdownV2(
+      data.kill_zone_context?.relevance || 'غیره'
     )}\n`;
     return message;
   };
@@ -1158,7 +1158,7 @@ async function sendToTelegram(analysis, prompt, context) {
     formData.append('document', fs.createReadStream(filePath));
     formData.append(
       'caption',
-      escapeMarkdownV2('AI Prompt for BTC/USD ICT Analysis')
+      escapeMarkdownV2('پرامپت هوش مصنوعی برای تحلیل ICT بیت‌کوین/دلار')
     );
 
     for (let attempt = 1; attempt <= 3; attempt++) {
@@ -1271,7 +1271,7 @@ Manual: ${manual}
 Current Time (UTC): ${currentTimeUTC}
 Human-Readable Current Time: ${humanReadableTime}
 Timeframe Data: ${JSON.stringify(formattedResults, null, 2)}
-Command: Return a JSON object with the fields signal, confidence, timeframe, summary, potential_setups_forming, key_levels_to_watch, current_price, news_analysis, and kill_zone_context directly at the root level, with no additional nesting (e.g., no response_format wrapper), no backticks, and no extra text, as the response will be processed by another machine. Ensure the response is a valid JSON object matching the specified structure. Use the provided Current Time (UTC) to align timestamps and ensure price levels are consistent with the Timeframe Data. The news_analysis object must include recent_news and upcoming_news arrays. If no relevant news events are available, set each to an empty array and include a note in the array (e.g., {"event": "None", "datetime_utc": "${currentTimeUTC}", "impact": "N/A"} for recent_news, or {"event": "None", "datetime_utc": "${currentTimeUTC}", "alert": "N/A"} for upcoming_news). Timestamps in the response must be in ISO format (YYYY-MM-DD HH:MM UTC) and reflect recent data relative to the current date.
+Command: Return a JSON object with the fields signal, confidence, timeframe, summary, potential_setups_forming, key_levels_to_watch, current_price, news_analysis, and kill_zone_context directly at the root level, with no additional nesting (e.g., no response_format wrapper), no backticks, and no extra text, as the response will be processed by another machine. Ensure the response is a valid JSON object matching the specified structure. All textual content (summary, potential_setups_forming, news_analysis events, impact, alert, and kill_zone_context fields) must be in Persian. Use the provided Current Time (UTC) to align timestamps and ensure price levels are consistent with the Timeframe Data. The news_analysis object must include recent_news and upcoming_news arrays. If no relevant news events are available, set each to an empty array and include a note in the array (e.g., {"event": "هیچ", "datetime_utc": "${currentTimeUTC}", "impact": "غیره"} for recent_news, or {"event": "هیچ", "datetime_utc": "${currentTimeUTC}", "alert": "غیره"} for upcoming_news). Timestamps in the response must be in ISO format (YYYY-MM-DD HH:MM UTC) and reflect recent data relative to the current date.
 `;
 
     // Gemini API call
@@ -1339,22 +1339,6 @@ Command: Return a JSON object with the fields signal, confidence, timeframe, sum
     });
   } catch (error) {
     context.error(`Error in main execution: ${error.message}`);
-    try {
-      await axios.post(
-        `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
-        {
-          chat_id: TELEGRAM_CHANNEL_ID,
-          text: escapeMarkdownV2(
-            `⚠️ Error in BTC/USD Analysis: ${error.message.substring(0, 200)}`
-          ),
-          parse_mode: 'MarkdownV2',
-        },
-        { timeout: 5000 }
-      );
-      context.log('Error notification sent to Telegram');
-    } catch (telegramErr) {
-      context.error(`Failed to send error to Telegram: ${telegramErr.message}`);
-    }
     res.json({
       success: false,
       error: error.message,
