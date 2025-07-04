@@ -8,8 +8,10 @@ import {
 import axios from 'axios';
 import { instructions } from './instructions.js';
 import { manual } from './manual.js';
-import { Document, Packer, Paragraph } from 'docx';
-import fs from 'fs';
+import pkg from 'docx'; // Import docx as default
+const { Document, Packer, Paragraph } = pkg; // Destructure named exports
+import fs from 'fs'; // Explicitly import fs
+import FormData from 'form-data'; // Import FormData for sending files
 
 // Markdown escaping function
 const escapeMarkdownV2 = (text) => {
@@ -20,7 +22,6 @@ const escapeMarkdownV2 = (text) => {
 // Mock economic calendar (replace with real API if available)
 const fetchEconomicCalendar = async () => {
   // Mock data for high-impact U.S. news events
-  // Replace with API call to Investing.com, ForexFactory, etc., if provided
   return {
     recent_news: [
       {
@@ -69,7 +70,6 @@ const generateDocx = async (prompt, context) => {
 
 // AI response validation
 const validateAIResponse = (response, context) => {
-  // Handle both nested response_format and flat response
   const data = response.response_format || response;
   if (!data) {
     context.error('AI response is empty or invalid');
@@ -1114,10 +1114,10 @@ export default async function (req, res) {
   const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
   const limit = 99; // Fetch 99 + 1 = 100 candles
 
-  // Current time
-  const currentDate = new Date('2025-07-04T01:00:00Z'); // 04:00 AM EEST = 01:00 UTC
-  const currentTimeUTC = currentDate.toISOString(); // 2025-07-04T01:00:00.000Z
-  const humanReadableTime = currentDate.toUTCString(); // Fri, 04 Jul 2025 01:00:00 GMT
+  // Current time (updated to 04:08 AM EEST, July 04, 2025 = 01:08 UTC)
+  const currentDate = new Date('2025-07-04T01:08:00Z'); // 01:08 UTC
+  const currentTimeUTC = currentDate.toISOString(); // 2025-07-04T01:08:00.000Z
+  const humanReadableTime = currentDate.toUTCString(); // Fri, 04 Jul 2025 01:08:00 GMT
 
   // Validate environment variables
   if (!CRYPTOCOMPARE_API_KEY || CRYPTOCOMPARE_API_KEY === 'YOUR_API_KEY') {
@@ -1173,7 +1173,6 @@ Command: Return a JSON object with the fields signal, confidence, timeframe, sum
 `;
 
     // Gemini API call
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
       tools: [{ googleSearch: {} }],
