@@ -7,7 +7,7 @@ import {
 } from '@google/generative-ai';
 import axios from 'axios';
 import { instructions } from './instructions.js';
-import { manual } from './src/manual.js';
+import { manual } from './manual.js';
 
 // Markdown escaping function
 const escapeMarkdownV2 = (text) => {
