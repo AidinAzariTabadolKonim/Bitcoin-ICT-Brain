@@ -15,10 +15,7 @@ import FormData from 'form-data'; // Import FormData for sending files
 
 // Markdown escaping function
 function escapeMarkdownV2(text) {
-  if (typeof text !== 'string') {
-    text = String(text);
-  }
-  const specialChars = [
+  const reservedChars = [
     '_',
     '*',
     '[',
@@ -38,9 +35,12 @@ function escapeMarkdownV2(text) {
     '.',
     '!',
   ];
+  if (typeof text !== 'string') {
+    return String(text); // Convert non-strings (e.g., numbers) to strings
+  }
   let escapedText = '';
   for (const char of text) {
-    if (specialChars.includes(char)) {
+    if (reservedChars.includes(char)) {
       escapedText += '\\' + char;
     } else {
       escapedText += char;
@@ -1010,9 +1010,9 @@ async function sendToTelegram(analysis, prompt, context) {
     message += `💰 *Current Price:* ${escapeMarkdownV2(data.current_price ? data.current_price.toFixed(2) : 'N/A')}\n`;
     message += `✍️ *Summary:* ${escapeMarkdownV2(data.summary || 'No summary provided')}\n`;
     message += `🔄 *Potential Setups Forming:* ${escapeMarkdownV2(data.potential_setups_forming || 'None')}\n`;
-    message += `🎯 *Key Levels to Watch:* ${escapeMarkdownV2(data.key_levels_to_watch.join(', ') || 'None')}\n`;
+    message += `🎯 *Key Levels to Watch:* ${escapeMarkdownV2(data.key_levels_to_watch?.join(', ') || 'None')}\n`;
     message += `📰 *News Analysis:*\n`;
-    if (data.news_analysis.recent_news.length > 0) {
+    if (data.news_analysis?.recent_news?.length > 0) {
       message += `  *Recent News:*\n`;
       data.news_analysis.recent_news.forEach((news) => {
         message += `    \\- ${escapeMarkdownV2(news.event)} \\(${escapeMarkdownV2(news.datetime_utc)}\\): ${escapeMarkdownV2(news.impact || 'N/A')}\n`;
@@ -1020,7 +1020,7 @@ async function sendToTelegram(analysis, prompt, context) {
     } else {
       message += `  *Recent News:* None\n`;
     }
-    if (data.news_analysis.upcoming_news.length > 0) {
+    if (data.news_analysis?.upcoming_news?.length > 0) {
       message += `  *Upcoming News:*\n`;
       data.news_analysis.upcoming_news.forEach((news) => {
         message += `    \\- ${escapeMarkdownV2(news.event)} \\(${escapeMarkdownV2(news.datetime_utc)}\\): ${escapeMarkdownV2(news.alert || 'N/A')}\n`;
@@ -1029,15 +1029,18 @@ async function sendToTelegram(analysis, prompt, context) {
       message += `  *Upcoming News:* None\n`;
     }
     message += `⏰ *Kill Zone Context:*\n`;
-    message += `  *Current:* ${escapeMarkdownV2(data.kill_zone_context.current_kill_zone || 'None')}\n`;
-    message += `  *Upcoming:* ${escapeMarkdownV2(data.kill_zone_context.upcoming_kill_zone || 'None')}\n`;
-    message += `  *Relevance:* ${escapeMarkdownV2(data.kill_zone_context.relevance || 'N/A')}\n`;
+    message += `  *Current:* ${escapeMarkdownV2(data.kill_zone_context?.current_kill_zone || 'None')}\n`;
+    message += `  *Upcoming:* ${escapeMarkdownV2(data.kill_zone_context?.upcoming_kill_zone || 'None')}\n`;
+    message += `  *Relevance:* ${escapeMarkdownV2(data.kill_zone_context?.relevance || 'N/A')}\n`;
     return message;
   };
 
-  // Split message if too long
+  // Format and log the message
   const message = formatMessage(analysis);
   context.log(`Telegram message length: ${message.length} characters`);
+  context.log(`Formatted message preview: ${message.slice(0, 200)}...`); // Log first 200 chars for debugging
+
+  // Split message if too long
   const messages = [];
   if (message.length > maxMessageLength) {
     let currentMessage = '';
@@ -1072,6 +1075,7 @@ async function sendToTelegram(analysis, prompt, context) {
             chat_id: process.env.TELEGRAM_CHANNEL_ID,
             text: msg,
             parse_mode: 'MarkdownV2',
+            disable_web_page_preview: true,
           },
           { timeout: 10000 }
         );
@@ -1089,16 +1093,21 @@ async function sendToTelegram(analysis, prompt, context) {
         context.error(
           `Full error: ${JSON.stringify(err.response?.data || err, null, 2)}`
         );
+
+        // Fallback to plain text on first attempt if MarkdownV2 fails
         if (attempt === 1 && err.message.includes("can't parse entities")) {
           try {
             context.log(`Retrying message part ${i + 1} with plain text...`);
-            // Strip all Markdown and special characters for plain text fallback
-            const plainText = msg.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '');
+            // Convert MarkdownV2 to plain text by removing Markdown and escaping
+            const plainText = msg
+              .replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '') // Remove Markdown chars
+              .replace(/\\/g, ''); // Remove backslashes
             const response = await axios.post(
               telegramUrl,
               {
                 chat_id: process.env.TELEGRAM_CHANNEL_ID,
                 text: plainText,
+                disable_web_page_preview: true,
               },
               { timeout: 10000 }
             );
