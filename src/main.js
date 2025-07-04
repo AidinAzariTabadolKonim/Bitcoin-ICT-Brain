@@ -1173,6 +1173,7 @@ Command: Return a JSON object with the fields signal, confidence, timeframe, sum
 `;
 
     // Gemini API call
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
       tools: [{ googleSearch: {} }],
