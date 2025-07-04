@@ -8,11 +8,63 @@ import {
 import axios from 'axios';
 import { instructions } from './instructions.js';
 import { manual } from './manual.js';
+import { Document, Packer, Paragraph } from 'docx';
+import fs from 'fs';
 
 // Markdown escaping function
 const escapeMarkdownV2 = (text) => {
   if (typeof text !== 'string') return String(text);
   return text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+};
+
+// Mock economic calendar (replace with real API if available)
+const fetchEconomicCalendar = async () => {
+  // Mock data for high-impact U.S. news events
+  // Replace with API call to Investing.com, ForexFactory, etc., if provided
+  return {
+    recent_news: [
+      {
+        event: 'FOMC Meeting',
+        datetime_utc: '2025-07-02 14:00',
+        impact: 'Increased volatility in Bitcoin; price spiked by 2%.',
+      },
+    ],
+    upcoming_news: [
+      {
+        event: 'CPI Release',
+        datetime_utc: '2025-07-10 08:30',
+        alert:
+          'Pause trading during CPI unless volatility aligns with HTF bias.',
+      },
+    ],
+  };
+};
+
+// Generate .docx file with AI prompt
+const generateDocx = async (prompt, context) => {
+  const doc = new Document({
+    sections: [
+      {
+        properties: {},
+        children: [
+          new Paragraph({
+            text: 'BTC/USD ICT Analysis Prompt',
+            heading: 'Heading1',
+          }),
+          new Paragraph({
+            text: prompt,
+            spacing: { after: 200 },
+          }),
+        ],
+      },
+    ],
+  });
+
+  const buffer = await Packer.toBuffer(doc);
+  const filePath = '/tmp/ai_prompt.docx';
+  fs.writeFileSync(filePath, buffer);
+  context.log(`Generated .docx file at ${filePath}`);
+  return filePath;
 };
 
 // AI response validation
@@ -31,6 +83,9 @@ const validateAIResponse = (response, context) => {
     'summary',
     'potential_setups_forming',
     'key_levels_to_watch',
+    'current_price',
+    'news_analysis',
+    'kill_zone_context',
   ];
   for (const key of requiredKeys) {
     if (!(key in data)) {
@@ -50,6 +105,10 @@ const validateAIResponse = (response, context) => {
     context.error(`Invalid timeframe value: ${data.timeframe}`);
     throw new Error(`Invalid timeframe value: ${data.timeframe}`);
   }
+  if (typeof data.summary !== 'string') {
+    context.error(`summary must be a string`);
+    throw new Error(`summary must be a string`);
+  }
   if (typeof data.potential_setups_forming !== 'string') {
     context.error(`potential_setups_forming must be a string`);
     throw new Error(`potential_setups_forming must be a string`);
@@ -63,6 +122,50 @@ const validateAIResponse = (response, context) => {
       context.error(`key_levels_to_watch contains non-number: ${level}`);
       throw new Error(`key_levels_to_watch contains non-number: ${level}`);
     }
+  }
+  if (typeof data.current_price !== 'number') {
+    context.error(`current_price must be a number`);
+    throw new Error(`current_price must be a number`);
+  }
+  if (
+    typeof data.news_analysis !== 'object' ||
+    !Array.isArray(data.news_analysis.recent_news) ||
+    !Array.isArray(data.news_analysis.upcoming_news)
+  ) {
+    context.error(
+      `news_analysis must be an object with recent_news and upcoming_news arrays`
+    );
+    throw new Error(
+      `news_analysis must be an object with recent_news and upcoming_news arrays`
+    );
+  }
+  for (const news of [
+    ...data.news_analysis.recent_news,
+    ...data.news_analysis.upcoming_news,
+  ]) {
+    if (
+      typeof news !== 'object' ||
+      typeof news.event !== 'string' ||
+      typeof news.datetime_utc !== 'string' ||
+      (news.impact && typeof news.impact !== 'string') ||
+      (news.alert && typeof news.alert !== 'string')
+    ) {
+      context.error(`Invalid news_analysis item: ${JSON.stringify(news)}`);
+      throw new Error(`Invalid news_analysis item: ${JSON.stringify(news)}`);
+    }
+  }
+  if (
+    typeof data.kill_zone_context !== 'object' ||
+    typeof data.kill_zone_context.current_kill_zone !== 'string' ||
+    typeof data.kill_zone_context.upcoming_kill_zone !== 'string' ||
+    typeof data.kill_zone_context.relevance !== 'string'
+  ) {
+    context.error(
+      `kill_zone_context must be an object with current_kill_zone, upcoming_kill_zone, and relevance strings`
+    );
+    throw new Error(
+      `kill_zone_context must be an object with current_kill_zone, upcoming_kill_zone, and relevance strings`
+    );
   }
   return true;
 };
@@ -863,26 +966,50 @@ function formatDataForPrompt(results) {
   return formattedResults;
 }
 
-// Send to Telegram with retries and Markdown
-async function sendToTelegram(analysis, context) {
+// Send to Telegram with retries, Markdown, and .docx attachment
+async function sendToTelegram(analysis, prompt, context) {
   const telegramUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const telegramDocumentUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`;
   const formatMessage = (data) => {
     let message = `*BTC/USD ICT Analysis*\n\n`;
     message += `📊 *Signal:* ${escapeMarkdownV2(data.signal || 'N/A')}\n`;
     message += `🔥 *Confidence:* ${escapeMarkdownV2(data.confidence || 'N/A')}\n`;
     message += `⏰ *Timeframe:* ${escapeMarkdownV2(data.timeframe || 'N/A')}\n`;
+    message += `💰 *Current Price:* ${escapeMarkdownV2(data.current_price ? data.current_price.toFixed(2) : 'N/A')}\n`;
     message += `✍️ *Summary:* ${escapeMarkdownV2(data.summary || 'No summary provided')}\n`;
     message += `🔄 *Potential Setups Forming:* ${escapeMarkdownV2(data.potential_setups_forming || 'None')}\n`;
     message += `🎯 *Key Levels to Watch:* ${escapeMarkdownV2(data.key_levels_to_watch.join(', ') || 'None')}\n`;
+    message += `📰 *News Analysis:*\n`;
+    if (data.news_analysis.recent_news.length > 0) {
+      message += `  *Recent News:*\n`;
+      data.news_analysis.recent_news.forEach((news) => {
+        message += `    - ${escapeMarkdownV2(news.event)} (${escapeMarkdownV2(news.datetime_utc)}): ${escapeMarkdownV2(news.impact || 'N/A')}\n`;
+      });
+    } else {
+      message += `  *Recent News:* None\n`;
+    }
+    if (data.news_analysis.upcoming_news.length > 0) {
+      message += `  *Upcoming News:*\n`;
+      data.news_analysis.upcoming_news.forEach((news) => {
+        message += `    - ${escapeMarkdownV2(news.event)} (${escapeMarkdownV2(news.datetime_utc)}): ${escapeMarkdownV2(news.alert || 'N/A')}\n`;
+      });
+    } else {
+      message += `  *Upcoming News:* None\n`;
+    }
+    message += `⏰ *Kill Zone Context:*\n`;
+    message += `  *Current:* ${escapeMarkdownV2(data.kill_zone_context.current_kill_zone || 'None')}\n`;
+    message += `  *Upcoming:* ${escapeMarkdownV2(data.kill_zone_context.upcoming_kill_zone || 'None')}\n`;
+    message += `  *Relevance:* ${escapeMarkdownV2(data.kill_zone_context.relevance || 'N/A')}\n`;
     return message.length > 4096 ? message.substring(0, 4093) + '...' : message;
   };
 
   const message = formatMessage(analysis);
   context.log(`Telegram message length: ${message.length} characters`);
 
+  // Send analysis message
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      context.log(`Attempt ${attempt} to send to Telegram...`);
+      context.log(`Attempt ${attempt} to send analysis to Telegram...`);
       const response = await axios.post(
         telegramUrl,
         {
@@ -894,8 +1021,8 @@ async function sendToTelegram(analysis, context) {
       );
 
       if (response.data.ok) {
-        context.log('Message sent to Telegram successfully');
-        return;
+        context.log('Analysis message sent to Telegram successfully');
+        break;
       } else {
         throw new Error(`Telegram error: ${response.data.description}`);
       }
@@ -912,8 +1039,8 @@ async function sendToTelegram(analysis, context) {
             },
             { timeout: 5000 }
           );
-          context.log('Plain text message sent to Telegram');
-          return;
+          context.log('Plain text analysis message sent to Telegram');
+          break;
         } catch (simpleErr) {
           context.error(`Plain text send failed: ${simpleErr.message}`);
         }
@@ -921,9 +1048,55 @@ async function sendToTelegram(analysis, context) {
       if (attempt < 3) {
         await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
       } else {
-        throw new Error('Failed to send to Telegram after 3 attempts');
+        throw new Error('Failed to send analysis to Telegram after 3 attempts');
       }
     }
+  }
+
+  // Send .docx file
+  try {
+    const filePath = await generateDocx(prompt, context);
+    const formData = new FormData();
+    formData.append('chat_id', process.env.TELEGRAM_CHANNEL_ID);
+    formData.append('document', fs.createReadStream(filePath));
+    formData.append(
+      'caption',
+      escapeMarkdownV2('AI Prompt for BTC/USD ICT Analysis')
+    );
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        context.log(`Attempt ${attempt} to send .docx to Telegram...`);
+        const response = await axios.post(telegramDocumentUrl, formData, {
+          headers: formData.getHeaders(),
+          timeout: 10000,
+        });
+
+        if (response.data.ok) {
+          context.log('.docx file sent to Telegram successfully');
+          break;
+        } else {
+          throw new Error(
+            `Telegram document error: ${response.data.description}`
+          );
+        }
+      } catch (err) {
+        context.error(
+          `Attempt ${attempt} to send .docx failed: ${err.message}`
+        );
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        } else {
+          throw new Error('Failed to send .docx to Telegram after 3 attempts');
+        }
+      }
+    }
+
+    // Clean up temporary file
+    fs.unlinkSync(filePath);
+    context.log(`Cleaned up temporary file: ${filePath}`);
+  } catch (err) {
+    context.error(`Failed to send .docx to Telegram: ${err.message}`);
   }
 }
 
@@ -940,6 +1113,11 @@ export default async function (req, res) {
   const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
   const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
   const limit = 99; // Fetch 99 + 1 = 100 candles
+
+  // Current time
+  const currentDate = new Date('2025-07-04T01:00:00Z'); // 04:00 AM EEST = 01:00 UTC
+  const currentTimeUTC = currentDate.toISOString(); // 2025-07-04T01:00:00.000Z
+  const humanReadableTime = currentDate.toUTCString(); // Fri, 04 Jul 2025 01:00:00 GMT
 
   // Validate environment variables
   if (!CRYPTOCOMPARE_API_KEY || CRYPTOCOMPARE_API_KEY === 'YOUR_API_KEY') {
@@ -979,19 +1157,26 @@ export default async function (req, res) {
       logResults(timeframe, candles, indicators, context);
     }
 
+    // Fetch economic calendar
+    const economicCalendar = await fetchEconomicCalendar();
+
     // Format data for Gemini
     const formattedResults = formatDataForPrompt(results);
     const prompt = `
 Instructions: ${instructions}
 Manual: ${manual}
+Current Time (UTC): ${currentTimeUTC}
+Human-Readable Current Time: ${humanReadableTime}
+Economic Calendar: ${JSON.stringify(economicCalendar, null, 2)}
 Timeframe Data: ${JSON.stringify(formattedResults, null, 2)}
-Command: Return a JSON object with the fields signal, confidence, timeframe, summary, potential_setups_forming, and key_levels_to_watch directly at the root level, with no additional nesting (e.g., no response_format wrapper), no backticks, and no extra text, as the response will be processed by another machine. Ensure the response is a valid JSON object matching the specified structure.
+Command: Return a JSON object with the fields signal, confidence, timeframe, summary, potential_setups_forming, key_levels_to_watch, current_price, news_analysis, and kill_zone_context directly at the root level, with no additional nesting (e.g., no response_format wrapper), no backticks, and no extra text, as the response will be processed by another machine. Ensure the response is a valid JSON object matching the specified structure. Use the provided Current Time (UTC) and Economic Calendar to align timestamps and news events with 2025-07-04 and ensure price levels are consistent with the Timeframe Data. Timestamps in the response must be in ISO format (YYYY-MM-DD HH:MM UTC) and reflect recent data relative to 2025-07-04.
 `;
 
     // Gemini API call
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
+      model: 'gemini-2.5-flash',
+      tools: [{ googleSearch: {} }],
       safetySettings: [
         {
           category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
@@ -1026,7 +1211,7 @@ Command: Return a JSON object with the fields signal, confidence, timeframe, sum
           context.log(
             `Gemini parsed response: ${JSON.stringify(analysis, null, 2)}`
           );
-          validateAIResponse({ response_format: analysis }, context); // Pass as if response_format is the wrapper
+          validateAIResponse(analysis, context);
           break;
         } catch (parseErr) {
           context.error(`Failed to parse JSON: ${parseErr.message}`);
@@ -1044,8 +1229,8 @@ Command: Return a JSON object with the fields signal, confidence, timeframe, sum
       }
     }
 
-    // Send to Telegram
-    await sendToTelegram(analysis, context);
+    // Send to Telegram (analysis and .docx)
+    await sendToTelegram(analysis, prompt, context);
 
     // Return JSON response
     res.json({
