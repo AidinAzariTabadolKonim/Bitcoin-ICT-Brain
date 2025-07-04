@@ -967,9 +967,12 @@ function formatDataForPrompt(results) {
 }
 
 // Send to Telegram with retries, Markdown, and .docx attachment
+// Send to Telegram with retries, Markdown, and .docx attachment
 async function sendToTelegram(analysis, prompt, context) {
   const telegramUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
   const telegramDocumentUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`;
+  const maxMessageLength = 4096;
+
   const formatMessage = (data) => {
     let message = `*BTC/USD ICT Analysis*\n\n`;
     message += `📊 *Signal:* ${escapeMarkdownV2(data.signal || 'N/A')}\n`;
@@ -1000,62 +1003,104 @@ async function sendToTelegram(analysis, prompt, context) {
     message += `  *Current:* ${escapeMarkdownV2(data.kill_zone_context.current_kill_zone || 'None')}\n`;
     message += `  *Upcoming:* ${escapeMarkdownV2(data.kill_zone_context.upcoming_kill_zone || 'None')}\n`;
     message += `  *Relevance:* ${escapeMarkdownV2(data.kill_zone_context.relevance || 'N/A')}\n`;
-    return message.length > 4096 ? message.substring(0, 4093) + '...' : message;
+    return message;
   };
 
+  // Split message if too long
   const message = formatMessage(analysis);
   context.log(`Telegram message length: ${message.length} characters`);
-
-  // Send analysis message
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      context.log(`Attempt ${attempt} to send analysis to Telegram...`);
-      const response = await axios.post(
-        telegramUrl,
-        {
-          chat_id: process.env.TELEGRAM_CHANNEL_ID,
-          text: message,
-          parse_mode: 'MarkdownV2',
-        },
-        { timeout: 5000 }
-      );
-
-      if (response.data.ok) {
-        context.log('Analysis message sent to Telegram successfully');
-        break;
+  const messages = [];
+  if (message.length > maxMessageLength) {
+    let currentMessage = '';
+    const lines = message.split('\n');
+    for (const line of lines) {
+      if (currentMessage.length + line.length + 1 > maxMessageLength) {
+        messages.push(currentMessage);
+        currentMessage = line + '\n';
       } else {
-        throw new Error(`Telegram error: ${response.data.description}`);
+        currentMessage += line + '\n';
       }
-    } catch (err) {
-      context.error(`Attempt ${attempt} failed: ${err.message}`);
-      if (attempt === 1 && err.message.includes('Markdown')) {
-        try {
-          context.log('Retrying with plain text...');
-          await axios.post(
-            telegramUrl,
-            {
-              chat_id: process.env.TELEGRAM_CHANNEL_ID,
-              text: message.replace(/[*_`[\]]/g, ''),
-            },
-            { timeout: 5000 }
-          );
-          context.log('Plain text analysis message sent to Telegram');
+    }
+    if (currentMessage) messages.push(currentMessage);
+  } else {
+    messages.push(message);
+  }
+
+  // Send analysis messages
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    context.log(
+      `Sending message part ${i + 1}/${messages.length} (${msg.length} characters)`
+    );
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        context.log(
+          `Attempt ${attempt} to send message part ${i + 1} to Telegram...`
+        );
+        const response = await axios.post(
+          telegramUrl,
+          {
+            chat_id: process.env.TELEGRAM_CHANNEL_ID,
+            text: msg,
+            parse_mode: 'MarkdownV2',
+          },
+          { timeout: 10000 }
+        );
+
+        if (response.data.ok) {
+          context.log(`Message part ${i + 1} sent to Telegram successfully`);
           break;
-        } catch (simpleErr) {
-          context.error(`Plain text send failed: ${simpleErr.message}`);
+        } else {
+          throw new Error(`Telegram error: ${response.data.description}`);
         }
-      }
-      if (attempt < 3) {
-        await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
-      } else {
-        throw new Error('Failed to send analysis to Telegram after 3 attempts');
+      } catch (err) {
+        context.error(
+          `Attempt ${attempt} for message part ${i + 1} failed: ${err.message}`
+        );
+        context.error(
+          `Full error: ${JSON.stringify(err.response?.data || err, null, 2)}`
+        );
+        if (attempt === 1 && err.message.includes('Markdown')) {
+          try {
+            context.log(`Retrying message part ${i + 1} with plain text...`);
+            const plainText = msg.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '');
+            const response = await axios.post(
+              telegramUrl,
+              {
+                chat_id: process.env.TELEGRAM_CHANNEL_ID,
+                text: plainText,
+              },
+              { timeout: 10000 }
+            );
+            if (response.data.ok) {
+              context.log(`Plain text message part ${i + 1} sent to Telegram`);
+              break;
+            } else {
+              throw new Error(
+                `Plain text Telegram error: ${response.data.description}`
+              );
+            }
+          } catch (simpleErr) {
+            context.error(
+              `Plain text send for part ${i + 1} failed: ${simpleErr.message}`
+            );
+          }
+        }
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+        } else {
+          throw new Error(
+            `Failed to send message part ${i + 1} to Telegram after 3 attempts`
+          );
+        }
       }
     }
   }
 
   // Send .docx file
+  let filePath;
   try {
-    const filePath = await generateDocx(prompt, context);
+    filePath = await generateDocx(prompt, context);
     const formData = new FormData();
     formData.append('chat_id', process.env.TELEGRAM_CHANNEL_ID);
     formData.append('document', fs.createReadStream(filePath));
@@ -1069,7 +1114,7 @@ async function sendToTelegram(analysis, prompt, context) {
         context.log(`Attempt ${attempt} to send .docx to Telegram...`);
         const response = await axios.post(telegramDocumentUrl, formData, {
           headers: formData.getHeaders(),
-          timeout: 10000,
+          timeout: 15000,
         });
 
         if (response.data.ok) {
@@ -1084,6 +1129,9 @@ async function sendToTelegram(analysis, prompt, context) {
         context.error(
           `Attempt ${attempt} to send .docx failed: ${err.message}`
         );
+        context.error(
+          `Full error: ${JSON.stringify(err.response?.data || err, null, 2)}`
+        );
         if (attempt < 3) {
           await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
         } else {
@@ -1091,12 +1139,19 @@ async function sendToTelegram(analysis, prompt, context) {
         }
       }
     }
-
-    // Clean up temporary file
-    fs.unlinkSync(filePath);
-    context.log(`Cleaned up temporary file: ${filePath}`);
   } catch (err) {
     context.error(`Failed to send .docx to Telegram: ${err.message}`);
+  } finally {
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+        context.log(`Cleaned up temporary file: ${filePath}`);
+      } catch (cleanupErr) {
+        context.error(
+          `Failed to clean up temporary file: ${cleanupErr.message}`
+        );
+      }
+    }
   }
 }
 
