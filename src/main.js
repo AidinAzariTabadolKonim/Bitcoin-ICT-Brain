@@ -14,10 +14,40 @@ import fs from 'fs'; // Explicitly import fs
 import FormData from 'form-data'; // Import FormData for sending files
 
 // Markdown escaping function
-const escapeMarkdownV2 = (text) => {
-  if (typeof text !== 'string') return String(text);
-  return text.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
-};
+function escapeMarkdownV2(text) {
+  if (typeof text !== 'string') {
+    text = String(text);
+  }
+  const specialChars = [
+    '_',
+    '*',
+    '[',
+    ']',
+    '(',
+    ')',
+    '~',
+    '`',
+    '>',
+    '#',
+    '+',
+    '-',
+    '=',
+    '|',
+    '{',
+    '}',
+    '.',
+    '!',
+  ];
+  let escapedText = '';
+  for (const char of text) {
+    if (specialChars.includes(char)) {
+      escapedText += '\\' + char;
+    } else {
+      escapedText += char;
+    }
+  }
+  return escapedText;
+}
 
 // Mock economic calendar (replace with real API if available)
 const fetchEconomicCalendar = async () => {
@@ -967,7 +997,6 @@ function formatDataForPrompt(results) {
 }
 
 // Send to Telegram with retries, Markdown, and .docx attachment
-// Send to Telegram with retries, Markdown, and .docx attachment
 async function sendToTelegram(analysis, prompt, context) {
   const telegramUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`;
   const telegramDocumentUrl = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendDocument`;
@@ -986,7 +1015,7 @@ async function sendToTelegram(analysis, prompt, context) {
     if (data.news_analysis.recent_news.length > 0) {
       message += `  *Recent News:*\n`;
       data.news_analysis.recent_news.forEach((news) => {
-        message += `    - ${escapeMarkdownV2(news.event)} (${escapeMarkdownV2(news.datetime_utc)}): ${escapeMarkdownV2(news.impact || 'N/A')}\n`;
+        message += `    \\- ${escapeMarkdownV2(news.event)} \\(${escapeMarkdownV2(news.datetime_utc)}\\): ${escapeMarkdownV2(news.impact || 'N/A')}\n`;
       });
     } else {
       message += `  *Recent News:* None\n`;
@@ -994,7 +1023,7 @@ async function sendToTelegram(analysis, prompt, context) {
     if (data.news_analysis.upcoming_news.length > 0) {
       message += `  *Upcoming News:*\n`;
       data.news_analysis.upcoming_news.forEach((news) => {
-        message += `    - ${escapeMarkdownV2(news.event)} (${escapeMarkdownV2(news.datetime_utc)}): ${escapeMarkdownV2(news.alert || 'N/A')}\n`;
+        message += `    \\- ${escapeMarkdownV2(news.event)} \\(${escapeMarkdownV2(news.datetime_utc)}\\): ${escapeMarkdownV2(news.alert || 'N/A')}\n`;
       });
     } else {
       message += `  *Upcoming News:* None\n`;
@@ -1060,9 +1089,10 @@ async function sendToTelegram(analysis, prompt, context) {
         context.error(
           `Full error: ${JSON.stringify(err.response?.data || err, null, 2)}`
         );
-        if (attempt === 1 && err.message.includes('Markdown')) {
+        if (attempt === 1 && err.message.includes("can't parse entities")) {
           try {
             context.log(`Retrying message part ${i + 1} with plain text...`);
+            // Strip all Markdown and special characters for plain text fallback
             const plainText = msg.replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '');
             const response = await axios.post(
               telegramUrl,
@@ -1084,6 +1114,9 @@ async function sendToTelegram(analysis, prompt, context) {
             context.error(
               `Plain text send for part ${i + 1} failed: ${simpleErr.message}`
             );
+            context.error(
+              `Full error: ${JSON.stringify(simpleErr.response?.data || simpleErr, null, 2)}`
+            );
           }
         }
         if (attempt < 3) {
@@ -1101,6 +1134,7 @@ async function sendToTelegram(analysis, prompt, context) {
   let filePath;
   try {
     filePath = await generateDocx(prompt, context);
+    context.log(`Generated .docx file at: ${filePath}`);
     const formData = new FormData();
     formData.append('chat_id', process.env.TELEGRAM_CHANNEL_ID);
     formData.append('document', fs.createReadStream(filePath));
