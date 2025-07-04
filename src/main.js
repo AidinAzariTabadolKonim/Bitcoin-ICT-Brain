@@ -8,10 +8,19 @@ import {
 import axios from 'axios';
 import { instructions } from './instructions.js';
 import { manual } from './manual.js';
-import pkg from 'docx'; // Import docx as default
-const { Document, Packer, Paragraph } = pkg; // Destructure named exports
-import fs from 'fs'; // Explicitly import fs
-import FormData from 'form-data'; // Import FormData for sending files
+import pkg from 'docx';
+const { Document, Packer, Paragraph } = pkg;
+import fs from 'fs';
+import FormData from 'form-data';
+
+// Utility to format timestamp to MM/DD/YY
+function formatTimestampToDate(timestamp) {
+  const date = new Date(timestamp);
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const year = String(date.getFullYear()).slice(-2);
+  return `${month}/${day}/${year}`;
+}
 
 // Markdown escaping function
 function escapeMarkdownV2(text) {
@@ -36,7 +45,7 @@ function escapeMarkdownV2(text) {
     '!',
   ];
   if (typeof text !== 'string') {
-    return String(text); // Convert non-strings (e.g., numbers) to strings
+    return String(text);
   }
   let escapedText = '';
   for (const char of text) {
@@ -49,21 +58,20 @@ function escapeMarkdownV2(text) {
   return escapedText;
 }
 
-// Mock economic calendar (replace with real API if available)
+// Mock economic calendar
 const fetchEconomicCalendar = async () => {
-  // Mock data for high-impact U.S. news events
   return {
     recent_news: [
       {
         event: 'FOMC Meeting',
-        datetime_utc: '2025-07-02 14:00',
+        datetime_utc: '2025-07-02T14:00:00Z',
         impact: 'Increased volatility in Bitcoin; price spiked by 2%.',
       },
     ],
     upcoming_news: [
       {
         event: 'CPI Release',
-        datetime_utc: '2025-07-10 08:30',
+        datetime_utc: '2025-07-10T08:30:00Z',
         alert:
           'Pause trading during CPI unless volatility aligns with HTF bias.',
       },
@@ -213,13 +221,15 @@ async function fetchCandleData(timeframe, limit, context) {
       url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=BTC&tsym=USD&limit=${limit}&aggregate=4&api_key=${CRYPTOCOMPARE_API_KEY}`;
     } else if (timeframe === '15m') {
       url = `https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USD&limit=${limit}&aggregate=15&api_key=${CRYPTOCOMPARE_API_KEY}`;
+    } else if (timeframe === 'weekly') {
+      url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=${limit}&aggregate=7&api_key=${CRYPTOCOMPARE_API_KEY}`;
     } else {
       context.error(`Unsupported timeframe requested: ${timeframe}`);
       throw new Error(`Unsupported timeframe: ${timeframe}`);
     }
 
     context.log(`Fetching URL: ${url}`);
-    context.log(`Fetching 100 ${timeframe} candles...`);
+    context.log(`Fetching ${limit + 1} ${timeframe} candles...`);
 
     const response = await fetch(url);
     context.log(
@@ -244,7 +254,7 @@ async function fetchCandleData(timeframe, limit, context) {
       throw new Error(`API error for ${timeframe} timeframe: ${data.Message}`);
     }
 
-    const candles = data.Data.Data.slice(0, 100).map((item) => ({
+    const candles = data.Data.Data.slice(0, limit + 1).map((item) => ({
       timestamp: item.time * 1000,
       high: item.high,
       low: item.low,
@@ -342,7 +352,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
     }
     if (isUntapped && swingHigh.price > latestPrice) {
       untappedHighs.push({
-        timestamp: swingHigh.timestamp,
+        timestamp: formatTimestampToDate(swingHigh.timestamp),
         price: swingHigh.price,
       });
     }
@@ -359,7 +369,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
     }
     if (isUntapped && swingLow.price < latestPrice) {
       untappedLows.push({
-        timestamp: swingLow.timestamp,
+        timestamp: formatTimestampToDate(swingLow.timestamp),
         price: swingLow.price,
       });
     }
@@ -389,7 +399,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
         }
         if (mssConfirmed) {
           bullishBreakers.push({
-            timestamp: swingHighBetween.timestamp,
+            timestamp: formatTimestampToDate(swingHighBetween.timestamp),
             price: swingHighBetween.price,
           });
         }
@@ -421,7 +431,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
         }
         if (mssConfirmed) {
           bearishBreakers.push({
-            timestamp: swingLowBetween.timestamp,
+            timestamp: formatTimestampToDate(swingLowBetween.timestamp),
             price: swingLowBetween.price,
           });
         }
@@ -431,39 +441,9 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
 
   for (let i = 0; i < priceData.length - 2; i++) {
     const candle1 = priceData[i];
-    const candle2 = priceData[i + 1];
     const candle3 = priceData[i + 2];
 
-    if (candle1.low > candle3.high) {
-      const gapSize = candle1.low - candle3.high;
-      const minGapPercent = 0.002;
-      if (gapSize / candle3.high >= minGapPercent) {
-        let isActive = 'active';
-        const gapLow = candle3.high;
-        const gapHigh = candle1.low;
-        let maxFilled = 0;
-        for (let j = i + 3; j < priceData.length; j++) {
-          const currentCandle = priceData[j];
-          if (currentCandle.high >= gapLow && currentCandle.low <= gapHigh) {
-            const filledHigh = Math.min(currentCandle.high, gapHigh);
-            const filledLow = Math.max(currentCandle.low, gapLow);
-            const filledSize = filledHigh - filledLow;
-            const fillPercent = filledSize / gapSize;
-            maxFilled = Math.max(maxFilled, fillPercent);
-          }
-        }
-        if (maxFilled > 0) {
-          isActive = maxFilled > 0.8 ? 'inactive' : 'partially_active';
-        }
-        bullishFVGs.push({
-          timestamp: candle2.timestamp,
-          high: gapHigh,
-          low: gapLow,
-          isActive,
-        });
-      }
-    }
-
+    // Corrected FVG logic: Bullish FVG is when candle1.high < candle3.low
     if (candle1.high < candle3.low) {
       const gapSize = candle3.low - candle1.high;
       const minGapPercent = 0.002;
@@ -485,11 +465,42 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
         if (maxFilled > 0) {
           isActive = maxFilled > 0.8 ? 'inactive' : 'partially_active';
         }
-        bearishFVGs.push({
-          timestamp: candle2.timestamp,
+        bullishFVGs.push({
+          timestamp: formatTimestampToDate(priceData[i + 1].timestamp),
           high: gapHigh,
           low: gapLow,
-          isActive,
+          isActive: isActive === 'active',
+        });
+      }
+    }
+
+    // Bearish FVG is when candle1.low > candle3.high
+    if (candle1.low > candle3.high) {
+      const gapSize = candle1.low - candle3.high;
+      const minGapPercent = 0.002;
+      if (gapSize / candle3.high >= minGapPercent) {
+        let isActive = 'active';
+        const gapLow = candle3.high;
+        const gapHigh = candle1.low;
+        let maxFilled = 0;
+        for (let j = i + 3; j < priceData.length; j++) {
+          const currentCandle = priceData[j];
+          if (currentCandle.high >= gapLow && currentCandle.low <= gapHigh) {
+            const filledHigh = Math.min(currentCandle.high, gapHigh);
+            const filledLow = Math.max(currentCandle.low, gapLow);
+            const filledSize = filledHigh - filledLow;
+            const fillPercent = filledSize / gapSize;
+            maxFilled = Math.max(maxFilled, fillPercent);
+          }
+        }
+        if (maxFilled > 0) {
+          isActive = maxFilled > 0.8 ? 'inactive' : 'partially_active';
+        }
+        bearishFVGs.push({
+          timestamp: formatTimestampToDate(priceData[i + 1].timestamp),
+          high: gapHigh,
+          low: gapLow,
+          isActive: isActive === 'active',
         });
       }
     }
@@ -532,7 +543,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
             }
           }
           bullishOrderBlocks.push({
-            timestamp: candle.timestamp,
+            timestamp: formatTimestampToDate(candle.timestamp),
             price: meanThreshold,
             isActive,
           });
@@ -572,7 +583,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
             }
           }
           bearishOrderBlocks.push({
-            timestamp: candle.timestamp,
+            timestamp: formatTimestampToDate(candle.timestamp),
             price: meanThreshold,
             isActive,
           });
@@ -610,7 +621,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
           }
         }
         bullishPropulsionBlocks.push({
-          timestamp: candle.timestamp,
+          timestamp: formatTimestampToDate(candle.timestamp),
           price: meanThreshold,
           isActive,
         });
@@ -641,7 +652,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
           }
         }
         bearishPropulsionBlocks.push({
-          timestamp: candle.timestamp,
+          timestamp: formatTimestampToDate(candle.timestamp),
           price: meanThreshold,
           isActive,
         });
@@ -717,7 +728,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
             }
           }
           bullishRejectionBlocks.push({
-            timestamp: swingLow.timestamp,
+            timestamp: formatTimestampToDate(swingLow.timestamp),
             price: highestBodyClose,
             isActive,
           });
@@ -794,7 +805,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
             }
           }
           bearishRejectionBlocks.push({
-            timestamp: swingHigh.timestamp,
+            timestamp: formatTimestampToDate(swingHigh.timestamp),
             price: lowestBodyClose,
             isActive,
           });
@@ -849,7 +860,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
             }
           }
           bearishMitigationBlocks.push({
-            timestamp: candle.timestamp,
+            timestamp: formatTimestampToDate(candle.timestamp),
             price: meanThreshold,
             isActive,
           });
@@ -898,7 +909,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
             }
           }
           bullishMitigationBlocks.push({
-            timestamp: candle.timestamp,
+            timestamp: formatTimestampToDate(candle.timestamp),
             price: meanThreshold,
             isActive,
           });
@@ -907,36 +918,38 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
     }
   }
 
-  untappedHighs.sort((a, b) => a.timestamp - b.timestamp);
-  untappedLows.sort((a, b) => a.timestamp - b.timestamp);
-  bullishBreakers.sort((a, b) => a.timestamp - b.timestamp);
-  bearishBreakers.sort((a, b) => a.timestamp - b.timestamp);
-  bullishFVGs.sort((a, b) => a.timestamp - b.timestamp);
-  bearishFVGs.sort((a, b) => a.timestamp - b.timestamp);
-  bullishOrderBlocks.sort((a, b) => a.timestamp - b.timestamp);
-  bearishOrderBlocks.sort((a, b) => a.timestamp - b.timestamp);
-  bullishPropulsionBlocks.sort((a, b) => a.timestamp - b.timestamp);
-  bearishPropulsionBlocks.sort((a, b) => a.timestamp - b.timestamp);
-  bullishRejectionBlocks.sort((a, b) => a.timestamp - b.timestamp);
-  bearishRejectionBlocks.sort((a, b) => a.timestamp - b.timestamp);
-  bullishMitigationBlocks.sort((a, b) => a.timestamp - b.timestamp);
-  bearishMitigationBlocks.sort((a, b) => a.timestamp - b.timestamp);
-
+  // Filter active indicators
   return {
-    swingHighs: untappedHighs,
-    swingLows: untappedLows,
-    bullishBreakers,
-    bearishBreakers,
-    bullishFVGs,
-    bearishFVGs,
-    bullishOrderBlocks,
-    bearishOrderBlocks,
-    bullishPropulsionBlocks,
-    bearishPropulsionBlocks,
-    bullishRejectionBlocks,
-    bearishRejectionBlocks,
-    bullishMitigationBlocks,
-    bearishMitigationBlocks,
+    swingHighs: untappedHighs.filter((item) => item.isActive !== false),
+    swingLows: untappedLows.filter((item) => item.isActive !== false),
+    bullishBreakers: bullishBreakers.filter((item) => item.isActive !== false),
+    bearishBreakers: bearishBreakers.filter((item) => item.isActive !== false),
+    bullishFVGs: bullishFVGs.filter((item) => item.isActive),
+    bearishFVGs: bearishFVGs.filter((item) => item.isActive),
+    bullishOrderBlocks: bullishOrderBlocks.filter(
+      (item) => item.isActive !== false
+    ),
+    bearishOrderBlocks: bearishOrderBlocks.filter(
+      (item) => item.isActive !== false
+    ),
+    bullishPropulsionBlocks: bullishPropulsionBlocks.filter(
+      (item) => item.isActive !== false
+    ),
+    bearishPropulsionBlocks: bearishPropulsionBlocks.filter(
+      (item) => item.isActive !== false
+    ),
+    bullishRejectionBlocks: bullishRejectionBlocks.filter(
+      (item) => item.isActive !== false
+    ),
+    bearishRejectionBlocks: bearishRejectionBlocks.filter(
+      (item) => item.isActive !== false
+    ),
+    bullishMitigationBlocks: bullishMitigationBlocks.filter(
+      (item) => item.isActive !== false
+    ),
+    bearishMitigationBlocks: bearishMitigationBlocks.filter(
+      (item) => item.isActive !== false
+    ),
   };
 }
 
@@ -991,6 +1004,15 @@ function formatDataForPrompt(results) {
     formattedResults[timeframe] = {
       indicators: results[timeframe].indicators,
       latestPrice: results[timeframe].latestPrice,
+      candles: results[timeframe].candles.map((candle) => ({
+        timestamp: formatTimestampToDate(candle.timestamp),
+        high: candle.high,
+        low: candle.low,
+        open: candle.open,
+        close: candle.close,
+        volumefrom: candle.volumefrom,
+        volumeto: candle.volumeto,
+      })),
     };
   }
   return formattedResults;
@@ -1007,15 +1029,23 @@ async function sendToTelegram(analysis, prompt, context) {
     message += `📊 *Signal:* ${escapeMarkdownV2(data.signal || 'N/A')}\n`;
     message += `🔥 *Confidence:* ${escapeMarkdownV2(data.confidence || 'N/A')}\n`;
     message += `⏰ *Timeframe:* ${escapeMarkdownV2(data.timeframe || 'N/A')}\n`;
-    message += `💰 *Current Price:* ${escapeMarkdownV2(data.current_price ? data.current_price.toFixed(2) : 'N/A')}\n`;
+    message += `💰 *Current Price:* ${escapeMarkdownV2(
+      data.current_price ? data.current_price.toFixed(2) : 'N/A'
+    )}\n`;
     message += `✍️ *Summary:* ${escapeMarkdownV2(data.summary || 'No summary provided')}\n`;
-    message += `🔄 *Potential Setups Forming:* ${escapeMarkdownV2(data.potential_setups_forming || 'None')}\n`;
-    message += `🎯 *Key Levels to Watch:* ${escapeMarkdownV2(data.key_levels_to_watch?.join(', ') || 'None')}\n`;
+    message += `🔄 *Potential Setups Forming:* ${escapeMarkdownV2(
+      data.potential_setups_forming || 'None'
+    )}\n`;
+    message += `🎯 *Key Levels to Watch:* ${escapeMarkdownV2(
+      data.key_levels_to_watch?.join(', ') || 'None'
+    )}\n`;
     message += `📰 *News Analysis:*\n`;
     if (data.news_analysis?.recent_news?.length > 0) {
       message += `  *Recent News:*\n`;
       data.news_analysis.recent_news.forEach((news) => {
-        message += `    \\- ${escapeMarkdownV2(news.event)} \\(${escapeMarkdownV2(news.datetime_utc)}\\): ${escapeMarkdownV2(news.impact || 'N/A')}\n`;
+        message += `    \\- ${escapeMarkdownV2(news.event)} \\(${escapeMarkdownV2(
+          news.datetime_utc
+        )}\\): ${escapeMarkdownV2(news.impact || 'N/A')}\n`;
       });
     } else {
       message += `  *Recent News:* None\n`;
@@ -1023,24 +1053,30 @@ async function sendToTelegram(analysis, prompt, context) {
     if (data.news_analysis?.upcoming_news?.length > 0) {
       message += `  *Upcoming News:*\n`;
       data.news_analysis.upcoming_news.forEach((news) => {
-        message += `    \\- ${escapeMarkdownV2(news.event)} \\(${escapeMarkdownV2(news.datetime_utc)}\\): ${escapeMarkdownV2(news.alert || 'N/A')}\n`;
+        message += `    \\- ${escapeMarkdownV2(news.event)} \\(${escapeMarkdownV2(
+          news.datetime_utc
+        )}\\): ${escapeMarkdownV2(news.alert || 'N/A')}\n`;
       });
     } else {
       message += `  *Upcoming News:* None\n`;
     }
     message += `⏰ *Kill Zone Context:*\n`;
-    message += `  *Current:* ${escapeMarkdownV2(data.kill_zone_context?.current_kill_zone || 'None')}\n`;
-    message += `  *Upcoming:* ${escapeMarkdownV2(data.kill_zone_context?.upcoming_kill_zone || 'None')}\n`;
-    message += `  *Relevance:* ${escapeMarkdownV2(data.kill_zone_context?.relevance || 'N/A')}\n`;
+    message += `  *Current:* ${escapeMarkdownV2(
+      data.kill_zone_context?.current_kill_zone || 'None'
+    )}\n`;
+    message += `  *Upcoming:* ${escapeMarkdownV2(
+      data.kill_zone_context?.upcoming_kill_zone || 'None'
+    )}\n`;
+    message += `  *Relevance:* ${escapeMarkdownV2(
+      data.kill_zone_context?.relevance || 'N/A'
+    )}\n`;
     return message;
   };
 
-  // Format and log the message
   const message = formatMessage(analysis);
   context.log(`Telegram message length: ${message.length} characters`);
-  context.log(`Formatted message preview: ${message.slice(0, 200)}...`); // Log first 200 chars for debugging
+  context.log(`Formatted message preview: ${message.slice(0, 200)}...`);
 
-  // Split message if too long
   const messages = [];
   if (message.length > maxMessageLength) {
     let currentMessage = '';
@@ -1058,7 +1094,6 @@ async function sendToTelegram(analysis, prompt, context) {
     messages.push(message);
   }
 
-  // Send analysis messages
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i];
     context.log(
@@ -1094,14 +1129,12 @@ async function sendToTelegram(analysis, prompt, context) {
           `Full error: ${JSON.stringify(err.response?.data || err, null, 2)}`
         );
 
-        // Fallback to plain text on first attempt if MarkdownV2 fails
         if (attempt === 1 && err.message.includes("can't parse entities")) {
           try {
             context.log(`Retrying message part ${i + 1} with plain text...`);
-            // Convert MarkdownV2 to plain text by removing Markdown and escaping
             const plainText = msg
-              .replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '') // Remove Markdown chars
-              .replace(/\\/g, ''); // Remove backslashes
+              .replace(/([_*[\]()~`>#+\-=|{}.!\\])/g, '')
+              .replace(/\\/g, '');
             const response = await axios.post(
               telegramUrl,
               {
@@ -1139,7 +1172,6 @@ async function sendToTelegram(analysis, prompt, context) {
     }
   }
 
-  // Send .docx file
   let filePath;
   try {
     filePath = await generateDocx(prompt, context);
@@ -1200,22 +1232,22 @@ async function sendToTelegram(analysis, prompt, context) {
 
 export default async function (req, res) {
   const context = {
-    log: (msg) => console.log(msg), // Appwrite context.log
-    error: (msg) => console.error(msg), // Appwrite context.error
+    log: (msg) => console.log(msg),
+    error: (msg) => console.error(msg),
   };
 
-  // Environment variables
   const CRYPTOCOMPARE_API_KEY =
     process.env.CRYPTOCOMPARE_API_KEY || 'YOUR_API_KEY';
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
   const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
-  const limit = 99; // Fetch 99 + 1 = 100 candles
+  const limit = 99; // Fetch 99 + 1 = 100 candles for most timeframes
+  const weeklyLimit = 3; // Fetch 3 + 1 = 4 weekly candles
 
-  // Current time (updated to 04:08 AM EEST, July 04, 2025 = 01:08 UTC)
-  const currentDate = new Date('2025-07-04T01:08:00Z'); // 01:08 UTC
-  const currentTimeUTC = currentDate.toISOString(); // 2025-07-04T01:08:00.000Z
-  const humanReadableTime = currentDate.toUTCString(); // Fri, 04 Jul 2025 01:08:00 GMT
+  // Current time in UTC
+  const currentDate = new Date();
+  const currentTimeUTC = currentDate.toISOString();
+  const humanReadableTime = currentDate.toUTCString();
 
   // Validate environment variables
   if (!CRYPTOCOMPARE_API_KEY || CRYPTOCOMPARE_API_KEY === 'YOUR_API_KEY') {
@@ -1239,10 +1271,11 @@ export default async function (req, res) {
 
   try {
     // Fetch candles and calculate indicators
-    const timeframes = ['daily', '1h', '4h', '15m'];
+    const timeframes = ['weekly', 'daily', '4h', '1h', '15m'];
     const results = {};
     for (const timeframe of timeframes) {
-      const candles = await fetchCandleData(timeframe, limit, context);
+      const candleLimit = timeframe === 'weekly' ? weeklyLimit : limit;
+      const candles = await fetchCandleData(timeframe, candleLimit, context);
       const indicators =
         findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
           candles
@@ -1266,8 +1299,12 @@ Manual: ${manual}
 Current Time (UTC): ${currentTimeUTC}
 Human-Readable Current Time: ${humanReadableTime}
 Economic Calendar: ${JSON.stringify(economicCalendar, null, 2)}
-Timeframe Data: ${JSON.stringify(formattedResults, null, 2)}
-Command: Return a JSON object with the fields signal, confidence, timeframe, summary, potential_setups_forming, key_levels_to_watch, current_price, news_analysis, and kill_zone_context directly at the root level, with no additional nesting (e.g., no response_format wrapper), no backticks, and no extra text, as the response will be processed by another machine. Ensure the response is a valid JSON object matching the specified structure. Use the provided Current Time (UTC) and Economic Calendar to align timestamps and news events with 2025-07-04 and ensure price levels are consistent with the Timeframe Data. Timestamps in the response must be in ISO format (YYYY-MM-DD HH:MM UTC) and reflect recent data relative to 2025-07-04.
+Timeframe Data (including last 4 weekly candles): ${JSON.stringify(
+      formattedResults,
+      null,
+      2
+    )}
+Command: Return a JSON object with the fields signal, confidence, timeframe, summary, potential_setups_forming, key_levels_to_watch, current_price, news_analysis, and kill_zone_context directly at the root level, with no additional nesting (e.g., no response_format wrapper), no backticks, and no extra text, as the response will be processed by another machine. Ensure the response is a valid JSON object matching the specified structure. Use the provided Current Time (UTC) and Economic Calendar to align timestamps and news events with the current date and time, and ensure price levels are consistent with the Timeframe Data. Timestamps in the response must be in ISO format (YYYY-MM-DD HH:MM UTC) and reflect recent data relative to the current date. Include analysis of the weekly timeframe data alongside other timeframes.
 `;
 
     // Gemini API call
@@ -1293,14 +1330,12 @@ Command: Return a JSON object with the fields signal, confidence, timeframe, sum
         const responseText = result.response.text();
         context.log(`Gemini raw response: ${responseText}`);
         let jsonString = responseText;
-        // Try to extract JSON if wrapped in backticks or other formatting
         const jsonMatch = responseText.match(/{[\s\S]*}/);
         if (jsonMatch) {
           jsonString = jsonMatch[0];
         }
         try {
           const parsedResponse = JSON.parse(jsonString);
-          // Handle both nested response_format and flat response
           analysis = parsedResponse.response_format || parsedResponse;
           if (!analysis.signal) {
             context.error('Response does not contain required fields');
@@ -1327,10 +1362,9 @@ Command: Return a JSON object with the fields signal, confidence, timeframe, sum
       }
     }
 
-    // Send to Telegram (analysis and .docx)
+    // Send to Telegram
     await sendToTelegram(analysis, prompt, context);
 
-    // Return JSON response
     res.json({
       success: true,
       data: results,
