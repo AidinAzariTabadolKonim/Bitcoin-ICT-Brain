@@ -58,27 +58,6 @@ function escapeMarkdownV2(text) {
   return escapedText;
 }
 
-// Mock economic calendar
-const fetchEconomicCalendar = async () => {
-  return {
-    recent_news: [
-      {
-        event: 'FOMC Meeting',
-        datetime_utc: '2025-07-02T14:00:00Z',
-        impact: 'Increased volatility in Bitcoin; price spiked by 2%.',
-      },
-    ],
-    upcoming_news: [
-      {
-        event: 'CPI Release',
-        datetime_utc: '2025-07-10T08:30:00Z',
-        alert:
-          'Pause trading during CPI unless volatility aligns with HTF bias.',
-      },
-    ],
-  };
-};
-
 // Generate .docx file with AI prompt
 const generateDocx = async (prompt, context) => {
   const doc = new Document({
@@ -221,8 +200,6 @@ async function fetchCandleData(timeframe, limit, context) {
       url = `https://min-api.cryptocompare.com/data/v2/histohour?fsym=BTC&tsym=USD&limit=${limit}&aggregate=4&api_key=${CRYPTOCOMPARE_API_KEY}`;
     } else if (timeframe === '15m') {
       url = `https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USD&limit=${limit}&aggregate=15&api_key=${CRYPTOCOMPARE_API_KEY}`;
-    } else if (timeframe === 'weekly') {
-      url = `https://min-api.cryptocompare.com/data/v2/histoday?fsym=BTC&tsym=USD&limit=${limit}&aggregate=7&api_key=${CRYPTOCOMPARE_API_KEY}`;
     } else {
       context.error(`Unsupported timeframe requested: ${timeframe}`);
       throw new Error(`Unsupported timeframe: ${timeframe}`);
@@ -443,7 +420,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
     const candle1 = priceData[i];
     const candle3 = priceData[i + 2];
 
-    // Corrected FVG logic: Bullish FVG is when candle1.high < candle3.low
+    // Bullish FVG: candle1.high < candle3.low
     if (candle1.high < candle3.low) {
       const gapSize = candle3.low - candle1.high;
       const minGapPercent = 0.002;
@@ -474,7 +451,7 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
       }
     }
 
-    // Bearish FVG is when candle1.low > candle3.high
+    // Bearish FVG: candle1.low > candle3.high
     if (candle1.low > candle3.high) {
       const gapSize = candle1.low - candle3.high;
       const minGapPercent = 0.002;
@@ -1241,8 +1218,7 @@ export default async function (req, res) {
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
   const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
   const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
-  const limit = 99; // Fetch 99 + 1 = 100 candles for most timeframes
-  const weeklyLimit = 3; // Fetch 3 + 1 = 4 weekly candles
+  const limit = 99; // Fetch 99 + 1 = 100 candles
 
   // Current time in UTC
   const currentDate = new Date();
@@ -1271,11 +1247,10 @@ export default async function (req, res) {
 
   try {
     // Fetch candles and calculate indicators
-    const timeframes = ['weekly', 'daily', '4h', '1h', '15m'];
+    const timeframes = ['daily', '4h', '1h', '15m'];
     const results = {};
     for (const timeframe of timeframes) {
-      const candleLimit = timeframe === 'weekly' ? weeklyLimit : limit;
-      const candles = await fetchCandleData(timeframe, candleLimit, context);
+      const candles = await fetchCandleData(timeframe, limit, context);
       const indicators =
         findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
           candles
@@ -1288,9 +1263,6 @@ export default async function (req, res) {
       logResults(timeframe, candles, indicators, context);
     }
 
-    // Fetch economic calendar
-    const economicCalendar = await fetchEconomicCalendar();
-
     // Format data for Gemini
     const formattedResults = formatDataForPrompt(results);
     const prompt = `
@@ -1298,13 +1270,8 @@ Instructions: ${instructions}
 Manual: ${manual}
 Current Time (UTC): ${currentTimeUTC}
 Human-Readable Current Time: ${humanReadableTime}
-Economic Calendar: ${JSON.stringify(economicCalendar, null, 2)}
-Timeframe Data (including last 4 weekly candles): ${JSON.stringify(
-      formattedResults,
-      null,
-      2
-    )}
-Command: Return a JSON object with the fields signal, confidence, timeframe, summary, potential_setups_forming, key_levels_to_watch, current_price, news_analysis, and kill_zone_context directly at the root level, with no additional nesting (e.g., no response_format wrapper), no backticks, and no extra text, as the response will be processed by another machine. Ensure the response is a valid JSON object matching the specified structure. Use the provided Current Time (UTC) and Economic Calendar to align timestamps and news events with the current date and time, and ensure price levels are consistent with the Timeframe Data. Timestamps in the response must be in ISO format (YYYY-MM-DD HH:MM UTC) and reflect recent data relative to the current date. Include analysis of the weekly timeframe data alongside other timeframes.
+Timeframe Data: ${JSON.stringify(formattedResults, null, 2)}
+Command: Return a JSON object with the fields signal, confidence, timeframe, summary, potential_setups_forming, key_levels_to_watch, current_price, news_analysis, and kill_zone_context directly at the root level, with no additional nesting (e.g., no response_format wrapper), no backticks, and no extra text, as the response will be processed by another machine. Ensure the response is a valid JSON object matching the specified structure. Use the provided Current Time (UTC) to align timestamps and ensure price levels are consistent with the Timeframe Data. The news_analysis object must include recent_news and upcoming_news arrays. If no relevant news events are available, set each to an empty array and include a note in the array (e.g., {"event": "None", "datetime_utc": "${currentTimeUTC}", "impact": "N/A"} for recent_news, or {"event": "None", "datetime_utc": "${currentTimeUTC}", "alert": "N/A"} for upcoming_news). Timestamps in the response must be in ISO format (YYYY-MM-DD HH:MM UTC) and reflect recent data relative to the current date.
 `;
 
     // Gemini API call
