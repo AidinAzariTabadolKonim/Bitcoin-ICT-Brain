@@ -1,23 +1,11 @@
 import fetch from 'node-fetch';
-import 'dotenv/config';
-import {
-  GoogleGenerativeAI,
-  HarmCategory,
-  HarmBlockThreshold,
-} from '@google/generative-ai';
-import { instructions } from './instructions.js';
-import { manual } from './src/manual.js';
-export default async function main(context) {
+import 'dotenv/config'; // Add this if using a .env file
+
+export default async function (req, res) {
   // Environment variables
   const CRYPTOCOMPARE_API_KEY =
     process.env.CRYPTOCOMPARE_API_KEY || 'YOUR_API_KEY';
-  const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-  const TELEGRAM_CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
   const limit = 99; // Fetch 99 + 1 = 100 candles
-
-  // Placeholder variable for manual
- 
 
   // Fetch candle data for a given timeframe with enhanced logging
   async function fetchCandleData(timeframe, limit) {
@@ -32,22 +20,25 @@ export default async function main(context) {
       } else if (timeframe === '15m') {
         url = `https://min-api.cryptocompare.com/data/v2/histominute?fsym=BTC&tsym=USD&limit=${limit}&aggregate=15&api_key=${CRYPTOCOMPARE_API_KEY}`;
       } else {
-        context.error(`Unsupported timeframe requested: ${timeframe}`);
+        console.error(`Unsupported timeframe requested: ${timeframe}`);
         throw new Error(`Unsupported timeframe: ${timeframe}`);
       }
 
-      context.log(`Fetching URL: ${url}`);
-      context.log(`Fetching 100 ${timeframe} candles...`);
+      // Log the URL being fetched for debugging
+      console.log(`Fetching URL: ${url}`);
+      console.log(`Fetching 100 ${timeframe} candles...`);
 
       const response = await fetch(url);
 
-      context.log(
+      // Log response status for debugging
+      console.log(
         `Response status for ${timeframe}: ${response.status} ${response.statusText}`
       );
 
+      // Check if response is OK (status 200-299)
       if (!response.ok) {
         const errorText = await response.text();
-        context.error(
+        console.error(
           `HTTP error for ${timeframe}: ${response.status} ${response.statusText} - Details: ${errorText}`
         );
         throw new Error(
@@ -57,15 +48,18 @@ export default async function main(context) {
 
       const data = await response.json();
 
-      context.log(`Successfully fetched data for ${timeframe} timeframe`);
+      // Log successful data retrieval
+      console.log(`Successfully fetched data for ${timeframe} timeframe`);
 
+      // Check if API returned an error
       if (data.Response === 'Error') {
-        context.error(`API error for ${timeframe}: ${data.Message}`);
+        console.error(`API error for ${timeframe}: ${data.Message}`);
         throw new Error(
           `API error for ${timeframe} timeframe: ${data.Message}`
         );
       }
 
+      // Map to the format expected by the indicators function and limit to exactly 100 candles
       const candles = data.Data.Data.slice(0, 100).map((item) => ({
         timestamp: item.time * 1000,
         high: item.high,
@@ -76,11 +70,11 @@ export default async function main(context) {
         volumeto: item.volumeto,
       }));
 
-      context.log(`Processed ${candles.length} candles for ${timeframe}`);
+      console.log(`Processed ${candles.length} candles for ${timeframe}`);
       return candles;
     } catch (error) {
-      context.error(`Error fetching ${timeframe} candles: ${error.message}`);
-      throw error;
+      console.error(`Error fetching ${timeframe} candles: ${error.message}`);
+      throw error; // Re-throw to handle in the main try-catch
     }
   }
 
@@ -105,6 +99,7 @@ export default async function main(context) {
     const bullishMitigationBlocks = [];
     const bearishMitigationBlocks = [];
 
+    // Step 1: Identify swing highs and lows
     if (priceData.length < 3) {
       return {
         swingHighs: untappedHighs,
@@ -129,6 +124,7 @@ export default async function main(context) {
       const currentCandle = priceData[i];
       const nextCandle = priceData[i + 1];
 
+      // Swing High
       if (
         currentCandle.high > prevCandle.high &&
         currentCandle.high > nextCandle.high
@@ -140,6 +136,7 @@ export default async function main(context) {
         });
       }
 
+      // Swing Low
       if (
         currentCandle.low < prevCandle.low &&
         currentCandle.low < nextCandle.low
@@ -152,6 +149,7 @@ export default async function main(context) {
       }
     }
 
+    // Step 2: Filter untapped swing highs and lows
     const latestPrice = priceData[priceData.length - 1].close;
     for (let i = 0; i < swingHighs.length; i++) {
       const swingHigh = swingHighs[i];
@@ -191,6 +189,7 @@ export default async function main(context) {
       }
     }
 
+    // Step 3: Identify Bullish and Bearish Breaker Blocks
     for (let i = 1; i < swingLows.length; i++) {
       const currentLow = swingLows[i];
       const prevLow = swingLows[i - 1];
@@ -261,14 +260,16 @@ export default async function main(context) {
       }
     }
 
+    // Step 4: Identify Bullish and Bearish FVGs
     for (let i = 0; i < priceData.length - 2; i++) {
       const candle1 = priceData[i];
       const candle2 = priceData[i + 1];
       const candle3 = priceData[i + 2];
 
+      // Bullish FVG: Gap between candle1.low and candle3.high
       if (candle1.low > candle3.high) {
         const gapSize = candle1.low - candle3.high;
-        const minGapPercent = 0.002;
+        const minGapPercent = 0.002; // 0.2%
         if (gapSize / candle3.high >= minGapPercent) {
           let isActive = 'active';
           const gapLow = candle3.high;
@@ -299,9 +300,10 @@ export default async function main(context) {
         }
       }
 
+      // Bearish FVG: Gap between candle1.high and candle3.low
       if (candle1.high < candle3.low) {
         const gapSize = candle3.low - candle1.high;
-        const minGapPercent = 0.002;
+        const minGapPercent = 0.002; // 0.2%
         if (gapSize / candle1.high >= minGapPercent) {
           let isActive = 'active';
           const gapLow = candle1.high;
@@ -333,11 +335,13 @@ export default async function main(context) {
       }
     }
 
+    // Step 5: Identify Bullish and Bearish Order Blocks
     for (let i = 0; i < priceData.length; i++) {
       const candle = priceData[i];
       const bodySize = Math.abs(candle.open - candle.close);
-      const minBodyPercent = 0.002;
+      const minBodyPercent = 0.002; // 0.2%
 
+      // Bullish Order Block: Down-close candle near a swing low
       if (
         candle.close < candle.open &&
         bodySize / candle.open >= minBodyPercent
@@ -382,6 +386,7 @@ export default async function main(context) {
         }
       }
 
+      // Bearish Order Block: Up-close candle near a swing high
       if (
         candle.close > candle.open &&
         bodySize / candle.open >= minBodyPercent
@@ -427,11 +432,13 @@ export default async function main(context) {
       }
     }
 
+    // Step 6: Identify Bullish and Bearish Propulsion Blocks
     for (let i = 0; i < priceData.length; i++) {
       const candle = priceData[i];
       const bodySize = Math.abs(candle.open - candle.close);
-      const minBodyPercent = 0.002;
+      const minBodyPercent = 0.002; // 0.2%
 
+      // Bullish Propulsion Block: Down-close candle near a bullish order block
       if (
         candle.close < candle.open &&
         bodySize / candle.open >= minBodyPercent
@@ -466,6 +473,7 @@ export default async function main(context) {
         }
       }
 
+      // Bearish Propulsion Block: Up-close candle near a bearish order block
       if (
         candle.close > candle.open &&
         bodySize / candle.open >= minBodyPercent
@@ -501,10 +509,12 @@ export default async function main(context) {
       }
     }
 
+    // Step 7: Identify Bullish and Bearish Rejection Blocks
     for (let i = 0; i < swingLows.length; i++) {
       const swingLow = swingLows[i];
       const index = swingLow.index;
 
+      // Bullish Rejection Block: Cluster of 2+ candles with long lower wicks
       if (index >= 1 && index < priceData.length) {
         const candles = [];
         let j = index;
@@ -514,7 +524,7 @@ export default async function main(context) {
           swingCandle.open < swingCandle.close
             ? swingCandle.low - swingCandle.open
             : swingCandle.low - swingCandle.close;
-        const minWickPercent = 0.002;
+        const minWickPercent = 0.002; // 0.2%
         if (
           swingLowerWick >= swingBodySize &&
           swingLowerWick / swingCandle.open >= minWickPercent
@@ -555,6 +565,7 @@ export default async function main(context) {
             );
           }
 
+          // Validate: Price breaks below lowest body close, then reverses
           let isValidated = false;
           for (let j = index + 1; j < priceData.length && j <= index + 5; j++) {
             if (
@@ -589,6 +600,7 @@ export default async function main(context) {
       const swingHigh = swingHighs[i];
       const index = swingHigh.index;
 
+      // Bearish Rejection Block: Cluster of 2+ candles with long upper wicks
       if (index >= 1 && index < priceData.length) {
         const candles = [];
         let j = index;
@@ -598,7 +610,7 @@ export default async function main(context) {
           swingCandle.open > swingCandle.close
             ? swingCandle.high - swingCandle.open
             : swingCandle.high - swingCandle.close;
-        const minWickPercent = 0.002;
+        const minWickPercent = 0.002; // 0.2%
         if (
           swingUpperWick >= swingBodySize &&
           swingUpperWick / swingCandle.open >= minWickPercent
@@ -639,6 +651,7 @@ export default async function main(context) {
             );
           }
 
+          // Validate: Price breaks above highest body close, then reverses
           let isValidated = false;
           for (let j = index + 1; j < priceData.length && j <= index + 5; j++) {
             if (
@@ -669,11 +682,13 @@ export default async function main(context) {
       }
     }
 
+    // Step 8: Identify Bullish and Bearish Mitigation Blocks
     for (let i = 0; i < priceData.length; i++) {
       const candle = priceData[i];
       const bodySize = Math.abs(candle.open - candle.close);
-      const minBodyPercent = 0.002;
+      const minBodyPercent = 0.002; // 0.2%
 
+      // Bearish Mitigation Block: Last down-close candle before MSS (break below swing low)
       if (
         candle.close < candle.open &&
         bodySize / candle.open >= minBodyPercent
@@ -727,6 +742,7 @@ export default async function main(context) {
         }
       }
 
+      // Bullish Mitigation Block: Last up-close candle before MSS (break above swing high)
       if (
         candle.close > candle.open &&
         bodySize / candle.open >= minBodyPercent
@@ -781,6 +797,7 @@ export default async function main(context) {
       }
     }
 
+    // Sort by timestamp
     untappedHighs.sort((a, b) => a.timestamp - b.timestamp);
     untappedLows.sort((a, b) => a.timestamp - b.timestamp);
     bullishBreakers.sort((a, b) => a.timestamp - b.timestamp);
@@ -816,161 +833,58 @@ export default async function main(context) {
 
   // Function to log indicators only
   function logResults(timeframe, candles, indicators) {
-    context.log(`\n--- ${timeframe.toUpperCase()} ICT Indicators ---`);
-    context.log('Swing Highs:', JSON.stringify(indicators.swingHighs, null, 2));
-    context.log('Swing Lows:', JSON.stringify(indicators.swingLows, null, 2));
-    context.log(
+    console.log(`\n--- ${timeframe.toUpperCase()} ICT Indicators ---`);
+    console.log('Swing Highs:', JSON.stringify(indicators.swingHighs, null, 2));
+    console.log('Swing Lows:', JSON.stringify(indicators.swingLows, null, 2));
+    console.log(
       'Bullish Breakers:',
       JSON.stringify(indicators.bullishBreakers, null, 2)
     );
-    context.log(
+    console.log(
       'Bearish Breakers:',
       JSON.stringify(indicators.bearishBreakers, null, 2)
     );
-    context.log(
+    console.log(
       'Bullish FVGs:',
       JSON.stringify(indicators.bullishFVGs, null, 2)
     );
-    context.log(
+    console.log(
       'Bearish FVGs:',
       JSON.stringify(indicators.bearishFVGs, null, 2)
     );
-    context.log(
+    console.log(
       'Bullish Order Blocks:',
       JSON.stringify(indicators.bullishOrderBlocks, null, 2)
     );
-    context.log(
+    console.log(
       'Bearish Order Blocks:',
       JSON.stringify(indicators.bearishOrderBlocks, null, 2)
     );
-    context.log(
+    console.log(
       'Bullish Propulsion Blocks:',
       JSON.stringify(indicators.bullishPropulsionBlocks, null, 2)
     );
-    context.log(
+    console.log(
       'Bearish Propulsion Blocks:',
       JSON.stringify(indicators.bearishPropulsionBlocks, null, 2)
     );
-    context.log(
+    console.log(
       'Bullish Rejection Blocks:',
       JSON.stringify(indicators.bullishRejectionBlocks, null, 2)
     );
-    context.log(
+    console.log(
       'Bearish Rejection Blocks:',
       JSON.stringify(indicators.bearishRejectionBlocks, null, 2)
     );
-    context.log(
+    console.log(
       'Bullish Mitigation Blocks:',
       JSON.stringify(indicators.bullishMitigationBlocks, null, 2)
     );
-    context.log(
+    console.log(
       'Bearish Mitigation Blocks:',
       JSON.stringify(indicators.bearishMitigationBlocks, null, 2)
     );
-    context.log(`Latest Price: ${candles[candles.length - 1].close}`);
-  }
-
-  // Function to convert timestamps to human-readable format
-  function formatTimestamp(timestamp) {
-    return new Date(timestamp).toISOString();
-  }
-
-  // Function to format data for AI prompt
-  function formatDataForPrompt(results) {
-    const formattedResults = {};
-    for (const timeframe of Object.keys(results)) {
-      formattedResults[timeframe] = {
-        candles: results[timeframe].candles.map((candle) => ({
-          ...candle,
-          timestamp: formatTimestamp(candle.timestamp),
-        })),
-        indicators: {
-          ...results[timeframe].indicators,
-          swingHighs: results[timeframe].indicators.swingHighs.map((item) => ({
-            ...item,
-            timestamp: formatTimestamp(item.timestamp),
-          })),
-          swingLows: results[timeframe].indicators.swingLows.map((item) => ({
-            ...item,
-            timestamp: formatTimestamp(item.timestamp),
-          })),
-          bullishBreakers: results[timeframe].indicators.bullishBreakers.map(
-            (item) => ({
-              ...item,
-              timestamp: formatTimestamp(item.timestamp),
-            })
-          ),
-          bearishBreakers: results[timeframe].indicators.bearishBreakers.map(
-            (item) => ({
-              ...item,
-              timestamp: formatTimestamp(item.timestamp),
-            })
-          ),
-          bullishFVGs: results[timeframe].indicators.bullishFVGs.map(
-            (item) => ({
-              ...item,
-              timestamp: formatTimestamp(item.timestamp),
-            })
-          ),
-          bearishFVGs: results[timeframe].indicators.bearishFVGs.map(
-            (item) => ({
-              ...item,
-              timestamp: formatTimestamp(item.timestamp),
-            })
-          ),
-          bullishOrderBlocks: results[
-            timeframe
-          ].indicators.bullishOrderBlocks.map((item) => ({
-            ...item,
-            timestamp: formatTimestamp(item.timestamp),
-          })),
-          bearishOrderBlocks: results[
-            timeframe
-          ].indicators.bearishOrderBlocks.map((item) => ({
-            ...item,
-            timestamp: formatTimestamp(item.timestamp),
-          })),
-          bullishPropulsionBlocks: results[
-            timeframe
-          ].indicators.bullishPropulsionBlocks.map((item) => ({
-            ...item,
-            timestamp: formatTimestamp(item.timestamp),
-          })),
-          bearishPropulsionBlocks: results[
-            timeframe
-          ].indicators.bearishPropulsionBlocks.map((item) => ({
-            ...item,
-            timestamp: formatTimestamp(item.timestamp),
-          })),
-          bullishRejectionBlocks: results[
-            timeframe
-          ].indicators.bullishRejectionBlocks.map((item) => ({
-            ...item,
-            timestamp: formatTimestamp(item.timestamp),
-          })),
-          bearishRejectionBlocks: results[
-            timeframe
-          ].indicators.bearishRejectionBlocks.map((item) => ({
-            ...item,
-            timestamp: formatTimestamp(item.timestamp),
-          })),
-          bullishMitigationBlocks: results[
-            timeframe
-          ].indicators.bullishMitigationBlocks.map((item) => ({
-            ...item,
-            timestamp: formatTimestamp(item.timestamp),
-          })),
-          bearishMitigationBlocks: results[
-            timeframe
-          ].indicators.bearishMitigationBlocks.map((item) => ({
-            ...item,
-            timestamp: formatTimestamp(item.timestamp),
-          })),
-        },
-        latestPrice: results[timeframe].latestPrice,
-      };
-    }
-    return formattedResults;
+    console.log(`Latest Price: ${candles[candles.length - 1].close}`);
   }
 
   try {
@@ -992,126 +906,16 @@ export default async function main(context) {
       logResults(timeframe, candles, indicators);
     }
 
-    // Format data for AI prompt with human-readable timestamps
-    const formattedResults = formatDataForPrompt(results);
-
-    // Prepare the prompt for Gemini API
-    const prompt = `
-Instructions: ${instructions}
-
-Manual: ${manual}
-
-Timeframe Data (timestamps are in ISO format, UTC):
-${JSON.stringify(formattedResults, null, 2)}
-`;
-
-    // Use Gemini API for analysis
-    context.log('Using Gemini API...');
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-2.5-flash',
-      tools: [{ googleSearch: {} }],
-      safetySettings: [
-        {
-          category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
-          threshold: HarmBlockThreshold.BLOCK_NONE,
-        },
-      ],
-    });
-
-    let analysis;
-    let attempts = 0;
-    let success = false;
-    let lastError = null;
-    const MAX_FREE_REQUESTS = 100; // Adjust based on your Gemini API limits
-    let geminiRequestCount = 0; // Persist this if needed (e.g., in a database)
-
-    geminiRequestCount++;
-    context.log(`Gemini request count: ${geminiRequestCount}`);
-    if (geminiRequestCount > MAX_FREE_REQUESTS) {
-      throw new Error(
-        `Gemini daily free request limit (${MAX_FREE_REQUESTS}) exceeded.`
-      );
-    }
-
-    while (attempts < 3 && !success) {
-      try {
-        context.log(`Attempt ${attempts + 1} to get response from Gemini...`);
-        const result = await model.generateContent(prompt);
-        const responseText = result.response.text();
-        context.log(
-          'Raw Gemini response:',
-          responseText.substring(0, 500) + '...'
-        );
-
-        let jsonString = responseText;
-        const jsonMatch = responseText.match(/```json\n([\s\S]*?)\n```/);
-        if (jsonMatch) jsonString = jsonMatch[1];
-
-        analysis = JSON.parse(jsonString);
-        context.log('Gemini JSON response:', JSON.stringify(analysis, null, 2));
-        success = true;
-      } catch (err) {
-        lastError = err;
-        attempts++;
-        context.error(`Gemini error on attempt ${attempts}: ${err.message}`);
-        if (attempts < 3) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, 2000 * Math.pow(2, attempts))
-          );
-        }
-      }
-    }
-
-    if (!success) {
-      throw (
-        lastError ||
-        new Error('Failed to connect to Gemini API after 3 attempts')
-      );
-    }
-
-    context.log('Analysis successfully received from Gemini 2.5 Flash');
-
-    // Send the AI response to Telegram
-    await sendToTelegram(analysis);
-
-    // Return success response
-    return context.res.json({
+    // Return JSON response
+    res.json({
       success: true,
-      message: 'Data processed, analyzed by AI, and sent to Telegram',
+      data: results,
     });
   } catch (error) {
-    context.error(`Error in main execution: ${error.message}`);
-    return context.res.json({
+    console.error(`Error in main execution: ${error.message}`);
+    res.json({
       success: false,
       error: error.message,
     });
-  }
-
-  // Function to send message to Telegram channel
-  async function sendToTelegram(message) {
-    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
-    const params = {
-      chat_id: TELEGRAM_CHANNEL_ID,
-      text: `<pre>${JSON.stringify(message, null, 2)}</pre>`,
-      parse_mode: 'HTML',
-    };
-
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(params),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Telegram API error: ${response.statusText}`);
-      }
-
-      context.log('Message sent to Telegram successfully');
-    } catch (error) {
-      context.error(`Error sending to Telegram: ${error.message}`);
-    }
   }
 }
