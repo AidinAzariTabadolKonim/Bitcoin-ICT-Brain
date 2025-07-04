@@ -17,7 +17,8 @@ const escapeMarkdownV2 = (text) => {
 
 // AI response validation
 const validateAIResponse = (response, context) => {
-  const data = response.response_format || response; // Handle both nested and flat responses
+  // Handle both nested response_format and flat response
+  const data = response.response_format || response;
   if (!data) {
     context.error('AI response is empty or invalid');
     throw new Error('AI response is empty or invalid');
@@ -809,49 +810,43 @@ function findSwingPointsBreakersFVGsOrderPropulsionRejectionAndMitigation(
 // Log indicators
 function logResults(timeframe, candles, indicators, context) {
   context.log(`\n--- ${timeframe.toUpperCase()} ICT Indicators ---`);
-  context.log('Swing Highs:', JSON.stringify(indicators.swingHighs, null, 2));
-  context.log('Swing Lows:', JSON.stringify(indicators.swingLows, null, 2));
+  context.log(`Swing Highs: ${JSON.stringify(indicators.swingHighs, null, 2)}`);
+  context.log(`Swing Lows: ${JSON.stringify(indicators.swingLows, null, 2)}`);
   context.log(
-    'Bullish Breakers:',
-    JSON.stringify(indicators.bullishBreakers, null, 2)
+    `Bullish Breakers: ${JSON.stringify(indicators.bullishBreakers, null, 2)}`
   );
   context.log(
-    'Bearish Breakers:',
-    JSON.stringify(indicators.bearishBreakers, null, 2)
-  );
-  context.log('Bullish FVGs:', JSON.stringify(indicators.bullishFVGs, null, 2));
-  context.log('Bearish FVGs:', JSON.stringify(indicators.bearishFVGs, null, 2));
-  context.log(
-    'Bullish Order Blocks:',
-    JSON.stringify(indicators.bullishOrderBlocks, null, 2)
+    `Bearish Breakers: ${JSON.stringify(indicators.bearishBreakers, null, 2)}`
   );
   context.log(
-    'Bearish Order Blocks:',
-    JSON.stringify(indicators.bearishOrderBlocks, null, 2)
+    `Bullish FVGs: ${JSON.stringify(indicators.bullishFVGs, null, 2)}`
   );
   context.log(
-    'Bullish Propulsion Blocks:',
-    JSON.stringify(indicators.bullishPropulsionBlocks, null, 2)
+    `Bearish FVGs: ${JSON.stringify(indicators.bearishFVGs, null, 2)}`
   );
   context.log(
-    'Bearish Propulsion Blocks:',
-    JSON.stringify(indicators.bearishPropulsionBlocks, null, 2)
+    `Bullish Order Blocks: ${JSON.stringify(indicators.bullishOrderBlocks, null, 2)}`
   );
   context.log(
-    'Bullish Rejection Blocks:',
-    JSON.stringify(indicators.bullishRejectionBlocks, null, 2)
+    `Bearish Order Blocks: ${JSON.stringify(indicators.bearishOrderBlocks, null, 2)}`
   );
   context.log(
-    'Bearish Rejection Blocks:',
-    JSON.stringify(indicators.bearishRejectionBlocks, null, 2)
+    `Bullish Propulsion Blocks: ${JSON.stringify(indicators.bullishPropulsionBlocks, null, 2)}`
   );
   context.log(
-    'Bullish Mitigation Blocks:',
-    JSON.stringify(indicators.bullishMitigationBlocks, null, 2)
+    `Bearish Propulsion Blocks: ${JSON.stringify(indicators.bearishPropulsionBlocks, null, 2)}`
   );
   context.log(
-    'Bearish Mitigation Blocks:',
-    JSON.stringify(indicators.bearishMitigationBlocks, null, 2)
+    `Bullish Rejection Blocks: ${JSON.stringify(indicators.bullishRejectionBlocks, null, 2)}`
+  );
+  context.log(
+    `Bearish Rejection Blocks: ${JSON.stringify(indicators.bearishRejectionBlocks, null, 2)}`
+  );
+  context.log(
+    `Bullish Mitigation Blocks: ${JSON.stringify(indicators.bullishMitigationBlocks, null, 2)}`
+  );
+  context.log(
+    `Bearish Mitigation Blocks: ${JSON.stringify(indicators.bearishMitigationBlocks, null, 2)}`
   );
   context.log(`Latest Price: ${candles[candles.length - 1].close}`);
 }
@@ -990,7 +985,7 @@ export default async function (req, res) {
 Instructions: ${instructions}
 Manual: ${manual}
 Timeframe Data: ${JSON.stringify(formattedResults, null, 2)}
-Command: Return a JSON object with the fields signal, confidence, timeframe, summary, potential_setups_forming, and key_levels_to_watch directly at the root level, with no additional nesting (e.g., no response_format wrapper), no backticks, and no extra text, as the response will be processed by another machine.
+Command: Return a JSON object with the fields signal, confidence, timeframe, summary, potential_setups_forming, and key_levels_to_watch directly at the root level, with no additional nesting (e.g., no response_format wrapper), no backticks, and no extra text, as the response will be processed by another machine. Ensure the response is a valid JSON object matching the specified structure.
 `;
 
     // Gemini API call
@@ -1013,22 +1008,23 @@ Command: Return a JSON object with the fields signal, confidence, timeframe, sum
         context.log(`Attempt ${attempts + 1} to call Gemini...`);
         const result = await model.generateContent(prompt);
         const responseText = result.response.text();
-        context.log('Gemini raw response:', responseText);
+        context.log(`Gemini raw response: ${responseText}`);
         let jsonString = responseText;
-        // Try to extract JSON if wrapped in backticks
+        // Try to extract JSON if wrapped in backticks or other formatting
         const jsonMatch = responseText.match(/{[\s\S]*}/);
         if (jsonMatch) {
           jsonString = jsonMatch[0];
         }
         try {
           const parsedResponse = JSON.parse(jsonString);
-          analysis = parsedResponse.response_format || parsedResponse; // Extract response_format or use root
+          // Handle both nested response_format and flat response
+          analysis = parsedResponse.response_format || parsedResponse;
           if (!analysis.signal) {
+            context.error('Response does not contain required fields');
             throw new Error('Response does not contain required fields');
           }
           context.log(
-            'Gemini parsed response:',
-            JSON.stringify(analysis, null, 2)
+            `Gemini parsed response: ${JSON.stringify(analysis, null, 2)}`
           );
           validateAIResponse({ response_format: analysis }, context); // Pass as if response_format is the wrapper
           break;

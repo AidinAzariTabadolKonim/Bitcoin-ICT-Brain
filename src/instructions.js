@@ -19,13 +19,85 @@ Analyze the provided BTC/USD price data and ICT indicators across multiple timef
 Return only a JSON object with the following structure, with no additional text, backticks, or formatting:
 
 {
-  "response_format": {
-    "signal": { "type": "string", "enum": ["LONG", "SHORT", "HOLD"], "description": "The trading signal" },
-    "confidence": { "type": "string", "enum": ["Low", "Medium", "High"], "description": "Confidence level of the signal" },
-    "timeframe": { "type": "string", "enum": ["15m", "1h", "4h", "daily"], "description": "The timeframe analyzed" },
-    "summary": { "type": "string", "description": "you full top down analisy including what did you found on your search and why did you gave the signal you gave and why you think there potential setups forming and why the key levels you are giving are important your response should be very clear" },
-    "potential_setups_forming": { "type": "string", "description": "Description of potential trading setups (e.g., 'Bullish order block near swing low')" },
-    "key_levels_to_watch": { "type": "array", "items": { "type": "number" }, "description": "Array of price levels to monitor (e.g., [50000, 50500])" }
+  "signal": { 
+    "type": "string", 
+    "enum": ["LONG", "SHORT", "HOLD"], 
+    "description": "The trading signal based on ICT methodology, aligned with higher-timeframe (HTF) bias and confirmed by Price Delivery (PD) arrays and Market Structure Shift (MSS)." 
+  },
+  "confidence": { 
+    "type": "string", 
+    "enum": ["Low", "Medium", "High"], 
+    "description": "Confidence level of the signal, determined by confluence of HTF bias, PD arrays, Kill Zone timing, and liquidity pool alignment." 
+  },
+  "timeframe": { 
+    "type": "string", 
+    "enum": ["15m", "1h", "4h", "daily"], 
+    "description": "The primary timeframe used for the signal, prioritizing higher timeframes (daily, 4h) for bias and lower timeframes (1h, 15m) for setups." 
+  },
+  "current_price": { 
+    "type": "number", 
+    "description": "The closing price of the most recent candle on the analyzed timeframe, used to contextualize the signal and setups relative to current market conditions." 
+  },
+  "summary": { 
+    "type": "string", 
+    "description": "A detailed top-down analysis explaining: (1) HTF bias (daily/4h MSS, liquidity targets like BSL/SSL at specific price levels with timestamps), (2) specific PD arrays (e.g., Bullish OB at exact price, FVG ranges with high/low), (3) why the signal was given (e.g., alignment with MSS, Kill Zone, liquidity raid), (4) high-impact U.S. news events (e.g., FOMC, CPI) with exact UTC date and time, their impact on volatility, and whether trading is avoided or aligned with HTF bias, (5) current or upcoming Kill Zones (London: 5:00 AM - 9:00 AM UTC; NY: 11:00 AM - 2:00 PM UTC) and their relevance, (6) specific price levels and timestamps for referenced structures (e.g., MSS at $X on YYYY-MM-DD HH:MM UTC). Ensure clarity, precision, and numerical references for all key levels and events." 
+  },
+  "potential_setups_forming": { 
+    "type": "string", 
+    "description": "Description of potential trading setups forming, including: (1) specific Price Action Model (e.g., Model 1, Breaker Swing Point), (2) PD arrays involved (e.g., Bullish FVG at $X-$Y), (3) conditions for setup confirmation (e.g., retracement to 62% Fibonacci, MSS on 15m), (4) alignment with HTF bias and liquidity targets (BSL/SSL at specific prices), (5) Kill Zone timing for execution, and (6) numerical price levels with timestamps for clarity." 
+  },
+  "key_levels_to_watch": { 
+    "type": "array", 
+    "items": { "type": "number" }, 
+    "description": "Array of precise price levels to monitor (e.g., [50000.5, 50500.75]), derived from PD arrays (OB, FVG, BB), liquidity pools (BSL/SSL), or swing highs/lows. Include levels from daily/4h charts for HTF bias and 1h/15m for setups, with reasoning in the summary (e.g., 'BSL at 50000.5 from 20-day high on YYYY-MM-DD')." 
+  },
+  "news_analysis": { 
+    "type": "object", 
+    "properties": {
+      "recent_news": { 
+        "type": "array", 
+        "items": { 
+          "type": "object", 
+          "properties": { 
+            "event": { "type": "string", "description": "Name of the high-impact U.S. news event (e.g., FOMC, CPI)." },
+            "datetime_utc": { "type": "string", "description": "Exact date and time in UTC (YYYY-MM-DD HH:MM)." },
+            "impact": { "type": "string", "description": "Impact on Bitcoin price action (e.g., 'Increased volatility expected, avoid trading unless aligned with HTF bias')." }
+          }
+        },
+        "description": "List of recent high-impact U.S. news events affecting Bitcoin, with their UTC datetime and impact on price action."
+      },
+      "upcoming_news": { 
+        "type": "array", 
+        "items": { 
+          "type": "object", 
+          "properties": { 
+            "event": { "type": "string", "description": "Name of the upcoming high-impact U.S. news event." },
+            "datetime_utc": { "type": "string", "description": "Exact date and time in UTC (YYYY-MM-DD HH:MM)." },
+            "alert": { "type": "string", "description": "Action to take (e.g., 'Pause trading during event unless volatility supports daily bullish bias')." }
+          }
+        },
+        "description": "List of upcoming high-impact U.S. news events, with UTC datetime and trading recommendations."
+      }
+    },
+    "description": "Analysis of recent and upcoming high-impact U.S. news events (e.g., FOMC, CPI) with exact UTC datetimes, their impact on Bitcoin price action, and trading recommendations."
+  },
+  "kill_zone_context": { 
+    "type": "object", 
+    "properties": {
+      "current_kill_zone": { 
+        "type": "string", 
+        "description": "The current or most recent Kill Zone (e.g., 'London: 5:00 AM - 9:00 AM UTC' or 'NY: 11:00 AM - 2:00 PM UTC') if the analysis occurs during one, or 'None' if outside Kill Zones." 
+      },
+      "upcoming_kill_zone": { 
+        "type": "string", 
+        "description": "The next Kill Zone (e.g., 'NY: 11:00 AM - 2:00 PM UTC on YYYY-MM-DD') with its UTC start time, or 'None' if none are imminent." 
+      },
+      "relevance": { 
+        "type": "string", 
+        "description": "How the Kill Zone impacts the signal or setups (e.g., 'Signal generated in NY Kill Zone for high-probability execution; watch for SSL raid on 15m')." 
+      }
+    },
+    "description": "Context for London (5:00 AM - 9:00 AM UTC) and NY (11:00 AM - 2:00 PM UTC) Kill Zones, including current or upcoming zones and their relevance to the signal or setups."
   }
 }
 
